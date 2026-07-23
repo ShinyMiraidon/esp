@@ -6,10 +6,9 @@ POSTFIX = $(if $(strip $(ISCROSS)$(shell uname -a | grep -i -E mingw)),.exe,)
 
 TARGET=sparc-elf
 CC=$(TARGET)-gcc
-HOSTCC   = $(if $(ISCROSS),mingw32-,)gcc
-HOSTCC  += -m32
-HOSTCC  += -O2
-HOSTCC  += -Wall -Wextra -pedantic
+HOSTCC ?= $(if $(ISCROSS),mingw32-,)gcc
+HOSTCFLAGS ?= -O2 -g -Wall -Wextra -pedantic
+HOSTLDFLAGS ?=
 AR=$(TARGET)-ar
 RANLIB=$(TARGET)-ranlib
 AS=$(TARGET)-gcc -c
@@ -95,7 +94,9 @@ mkprom2-compile:
 
 mkprom2: clean
 	mkdir -p $(PREFIX)
-	$(HOSTCC) $(if $(LYNXOS_TOOL),-DLYNXOS_TOOL,) -DTOOLBASE="\"$(TOOLBASE)\"" -DRELEASE_VERSION="\"$(RELEASE_VERSION)\""  -I$(INCDIR) -g -Wall --static mkprom.c -o mkprom2$(POSTFIX) -lm $(WIN32-LIBS)
+	$(HOSTCC) $(HOSTCFLAGS) $(if $(LYNXOS_TOOL),-DLYNXOS_TOOL,) \
+		-DTOOLBASE="\"$(TOOLBASE)\"" -DRELEASE_VERSION="\"$(RELEASE_VERSION)\"" \
+		-I$(INCDIR) mkprom.c -o mkprom2$(POSTFIX) $(HOSTLDFLAGS) -lm $(WIN32-LIBS)
 	install mkprom2$(POSTFIX) $(if $(LYNXOS_TOOL),$(LYNXOS_TOOL)/,$(PREFIX)/)
 	install linkprom $(PREFIX)/
 	install linkbch $(PREFIX)/
@@ -157,4 +158,3 @@ upload: createdist cross
 
 download:
 	python ../download.py $(RELEASE_VERSION)
-

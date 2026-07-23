@@ -78,7 +78,10 @@ endif
 
 ifeq ("$(CPU_ARCH)", "leon3")
 ARCH=sparc
-CROSS_COMPILE_ELF = sparc-elf-
+# Current Gaisler BCC releases use sparc-gaisler-elf. Keep the legacy prefix
+# as a fallback for existing installations of BCC 1.
+LEON_BARE_PREFIX ?= $(if $(shell command -v sparc-gaisler-elf-gcc 2>/dev/null),sparc-gaisler-elf-,sparc-elf-)
+CROSS_COMPILE_ELF = $(LEON_BARE_PREFIX)
 CROSS_COMPILE_LINUX = sparc-linux-
 endif
 

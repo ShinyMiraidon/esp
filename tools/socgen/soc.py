@@ -515,7 +515,8 @@ class SoC_Config():
             FPGA_BOARD,
             EMU_TECH,
             EMU_FREQ,
-            temporary):
+            temporary,
+            tk_master=None):
         self.ARCH_BITS = ARCH_BITS
         self.TECH_TYPE = TECH_TYPE
         self.TECH = TECH
@@ -524,36 +525,36 @@ class SoC_Config():
         self.FPGA_BOARD = FPGA_BOARD
         self.ESP_EMU_TECH = EMU_TECH
         self.ESP_EMU_FREQ = EMU_FREQ
-        self.transfers = StringVar()
+        self.transfers = StringVar(master=tk_master)
         # CPU architecture
-        self.CPU_ARCH = StringVar()
+        self.CPU_ARCH = StringVar(master=tk_master)
         # Cache hierarchy
-        self.cache_en = IntVar()
-        self.cache_rtl = IntVar()
-        self.cache_spandex = IntVar()
-        self.cache_impl = StringVar()
-        self.l2_sets = IntVar()
-        self.l2_ways = IntVar()
-        self.llc_sets = IntVar()
-        self.llc_ways = IntVar()
-        self.acc_l2_sets = IntVar()
-        self.acc_l2_ways = IntVar()
-        self.cache_line_size = IntVar()
+        self.cache_en = IntVar(master=tk_master)
+        self.cache_rtl = IntVar(master=tk_master)
+        self.cache_spandex = IntVar(master=tk_master)
+        self.cache_impl = StringVar(master=tk_master)
+        self.l2_sets = IntVar(master=tk_master)
+        self.l2_ways = IntVar(master=tk_master)
+        self.llc_sets = IntVar(master=tk_master)
+        self.llc_ways = IntVar(master=tk_master)
+        self.acc_l2_sets = IntVar(master=tk_master)
+        self.acc_l2_ways = IntVar(master=tk_master)
+        self.cache_line_size = IntVar(master=tk_master)
         # SLM
-        self.slm_kbytes = IntVar()
+        self.slm_kbytes = IntVar(master=tk_master)
         # Peripherals
-        self.jtag_en = IntVar()
-        self.eth_en = IntVar()
-        self.iolink_en = IntVar()
-        self.iolink_width = IntVar()
-        self.mem_link_width = IntVar()
-        self.svga_en = IntVar()
+        self.jtag_en = IntVar(master=tk_master)
+        self.eth_en = IntVar(master=tk_master)
+        self.iolink_en = IntVar(master=tk_master)
+        self.iolink_width = IntVar(master=tk_master)
+        self.mem_link_width = IntVar(master=tk_master)
+        self.svga_en = IntVar(master=tk_master)
         # Debug Link
         self.dsu_ip = ""
         self.dsu_eth = ""
         # Advanced Configuration
-        self.clk_str = IntVar()
-        self.sync_en = IntVar()
+        self.clk_str = IntVar(master=tk_master)
+        self.sync_en = IntVar(master=tk_master)
 
         # Define whether SGMII has to be used or not: it is not used for
         # ProFPGA boards
@@ -578,7 +579,7 @@ class SoC_Config():
                         line, "integer := ", " ")
 
         # Read ESP configuration
-        self.noc = ncfg.NoC()
+        self.noc = ncfg.NoC(tk_master)
         self.read_config(temporary)
         self.set_IP()
 
