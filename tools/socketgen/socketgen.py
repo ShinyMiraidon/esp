@@ -2495,7 +2495,6 @@ def gen_noc_interface(acc, noc_width, template_dir, out_dir, is_axi):
         for tline in ftemplate:
             if is_axi and tline.find("library ieee;") >= 0:
                 f.write(tline)
-                f.write("library " + acc.name + ";\n")
             elif tline.find("-- <<entity>>") >= 0:
                 f.write("entity noc" + "_" + acc.name + " is\n")
             elif tline.find("-- <<architecture>>") >= 0:
@@ -2564,7 +2563,7 @@ def gen_noc_interface(acc, noc_width, template_dir, out_dir, is_axi):
             elif tline.find("-- <<accelerator_instance>>") >= 0:
                 f.write("  " + acc.name + "_rtl_i: ")
                 if is_axi:
-                    f.write("entity " + acc.name + "." + acc.name + "_wrapper\n")
+                    f.write(acc.name + "_wrapper\n")
                     write_axi_acc_port_map(f, acc, noc_width)
                 else:
                     f.write(acc.name + "_rtl\n")

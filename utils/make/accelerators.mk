@@ -439,12 +439,18 @@ $(ACC-driver): $(SOFT_BUILD)/sysroot $(SOFT_BUILD)/linux-build/vmlinux soft-buil
 	mkdir -p $$BUILD_PATH; \
 	ln -sf $$ACC_PATH/sw/linux/driver/* $$BUILD_PATH; \
 	if test -e $$BUILD_PATH/Makefile; then \
+		ko_file=""; \
 		echo '   ' MAKE $@; mkdir -p $(SOFT_BUILD)/sysroot/opt/drivers; \
-		ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) KSRC=$(SOFT_BUILD)/linux-build DRIVERS=$(DRV_LINUX) ACC_SW=$$ACC_PATH/sw $(MAKE) ESP_CORE_PATH=$(BUILD_DRIVERS)/esp DESIGN_PATH=$(DESIGN_PATH) -C $$BUILD_PATH; \
-		if test -e $$BUILD_PATH/*.ko; then \
-			echo '   ' CP $@; cp $$BUILD_PATH/*.ko $(SOFT_BUILD)/sysroot/opt/drivers/$(@:-driver=).ko; \
+		if ! ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) KSRC=$(SOFT_BUILD)/linux-build DRIVERS=$(DRV_LINUX) ACC_SW=$$ACC_PATH/sw $(MAKE) ESP_CORE_PATH=$(BUILD_DRIVERS)/esp DESIGN_PATH=$(DESIGN_PATH) -C $$BUILD_PATH; then \
+			echo '   ' ERROR $@ compilation failed!; \
+			exit 1; \
+		fi; \
+		ko_file=$$(find $$BUILD_PATH -maxdepth 1 -name '*.ko' -type f -print -quit); \
+		if test -n "$$ko_file"; then \
+			echo '   ' CP $@; cp $$ko_file $(SOFT_BUILD)/sysroot/opt/drivers/$(@:-driver=).ko; \
 		else \
-			echo '   ' WARNING $@ compilation failed!; \
+			echo '   ' ERROR $@ did not produce a kernel module!; \
+			exit 1; \
 		fi; \
 	else \
 		echo '   ' WARNING $@ not found!; \
@@ -460,15 +466,18 @@ $(ACC-app): $(SOFT_BUILD)/sysroot soft-build
 		echo '   ' MAKE $@; \
 		mkdir -p $(SOFT_BUILD)/sysroot/applications/test/; \
 		mkdir -p $$BUILD_PATH; \
-		CROSS_COMPILE=$(CROSS_COMPILE_LINUX) CPU_ARCH=$(CPU_ARCH) DRIVERS=$(DRV_LINUX) DESIGN_PATH=$(DESIGN_PATH) BUILD_PATH=$$BUILD_PATH $(MAKE) -C $$ACC_PATH/sw/linux/app; \
+		if ! CROSS_COMPILE=$(CROSS_COMPILE_LINUX) CPU_ARCH=$(CPU_ARCH) DRIVERS=$(DRV_LINUX) DESIGN_PATH=$(DESIGN_PATH) BUILD_PATH=$$BUILD_PATH $(MAKE) -C $$ACC_PATH/sw/linux/app; then \
+			echo '   ' ERROR $@ compilation failed!; \
+			exit 1; \
+		fi; \
 		if [ `ls -1 $$BUILD_PATH/*.exe 2>/dev/null | wc -l ` -gt 0 ]; then \
 			if [ `ls -1 $$BUILD_PATH/*.exe 2>/dev/null | wc -l ` -eq 1 ]; then \
 				echo '   ' CP $@; cp  $$BUILD_PATH/*.exe $(SOFT_BUILD)/sysroot/applications/test/$(@:-app=).exe ; \
 			else \
 				for f in $$BUILD_PATH/*.exe; do echo '   ' CP $@ $${f##*/}; cp $$f $(SOFT_BUILD)/sysroot/applications/test/$(@:-app=)_$${f##*/} ; done; \
 			fi; \
-			if [ `ls -1 $$ACC_PATH/sw/linux/app/*.so 2>/dev/null | wc -l ` -gt 0 ]; then \
-				echo '   ' CP "shared libraries"; cp $$ACC_PATH/sw/linux/app/*.so $(SOFT_BUILD)/sysroot/lib/ ; \
+			if [ `ls -1 $$BUILD_PATH/*.so 2>/dev/null | wc -l ` -gt 0 ]; then \
+				echo '   ' CP "shared libraries"; cp $$BUILD_PATH/*.so $(SOFT_BUILD)/sysroot/lib/ ; \
 			fi; \
 		else \
 			echo '   ' WARNING $@ compilation failed!; \

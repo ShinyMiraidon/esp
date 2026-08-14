@@ -50,6 +50,10 @@ endif
 
 ### Options for Vivado batch mode ###
 VIVADO_BATCH_OPT = -mode batch -quiet -notrace
+VIVADO_JOBS ?= 12
+VIVADO_SYN_TIMEOUT ?= 720
+VIVADO_IMPL_TIMEOUT ?= 720
+VIVADO_BITSTREAM_TIMEOUT ?= 60
 
 $(VIVADO_LOGS):
 	$(QUIET_MKDIR)mkdir -p $(VIVADO_LOGS)
@@ -195,7 +199,7 @@ endif
 				fi; \
 			done; \
 			if test -f "$$accsrc/$${acc}_wrapper.v"; then \
-				echo "read_verilog -library $$acclib -sv $$accsrc/$${acc}_wrapper.v" >> $@; \
+				echo "read_verilog -sv $$accsrc/$${acc}_wrapper.v" >> $@; \
 			fi; \
 			for fl in "$$accsrc/$$acc.verilog" "$$accsrc/$$acc.sverilog"; do \
 				if test -f "$$fl"; then \
@@ -215,7 +219,7 @@ endif
 						esac; \
 						case "$$p" in /*) f="$$p" ;; *) f="$$accsrc/out/$$p" ;; esac; \
 						if test -f "$$f"; then \
-							echo "read_verilog -library $$acclib $$svopt $$f" >> $@; \
+							echo "read_verilog $$svopt $$f" >> $@; \
 						else \
 							echo "ERROR missing third-party Verilog source $$f (from $$fl)" 1>&2; \
 							exit 1; \
@@ -320,6 +324,7 @@ endif
           fi; \
 	done;
 	@echo "set_property top $(TOP) [current_fileset]" >> $@
+	@echo "update_compile_order -fileset sources_1" >> $@
 
 
 vivado/setup_emu.tcl: vivado $(BOARD_FILES)
@@ -349,30 +354,37 @@ endif
 	@echo "update_compile_order -fileset sim_1" >> $@
 
 
-vivado/syn.tcl: vivado
+vivado/syn.tcl: vivado $(ESP_ROOT)/utils/make/vivado.mk $(ESP_ROOT)/constraints/$(BOARD)/Makefile.inc
 	$(QUIET_INFO)echo "generating synthesis script for Vivado"
 	@$(RM) $@
 	@echo "open_project $(DESIGN).xpr" > $@
+ifneq ("$(VIVADO_MAX_THREADS)","")
+	@echo "set_param general.maxThreads $(VIVADO_MAX_THREADS)" >> $@
+endif
 	@echo "update_ip_catalog" >> $@
+	@echo "set_property top $(TOP) [current_fileset]" >> $@
 	@echo "update_compile_order -fileset sources_1" >> $@
 	@echo "reset_run impl_1" >> $@
 	@echo "reset_run synth_1" >> $@
 #	@echo "synth_design -rtl -name rtl_1" >> $@
 #	@echo "synth_design -directive runtimeoptimize -resource_sharing off -keep_equivalent_registers -no_lc -rtl -name rtl_1" >> $@
 #	@echo "synth_design -resource_sharing off -keep_equivalent_registers -no_lc -rtl -name rtl_1" >> $@
-	@echo "launch_runs synth_1 -jobs 12" >> $@
+	@echo "launch_runs synth_1 -jobs $(VIVADO_JOBS)" >> $@
 	@echo "get_ips" >> $@
-	@echo "wait_on_run -timeout 720 synth_1" >> $@
+	@echo "wait_on_run -timeout $(VIVADO_SYN_TIMEOUT) synth_1" >> $@
 	@echo "set_msg_config -suppress -id {Drc 23-20}" >> $@
-	@echo "launch_runs impl_1 -jobs 12" >> $@
-	@echo "wait_on_run -timeout 720 impl_1" >> $@
+	@echo "launch_runs impl_1 -jobs $(VIVADO_JOBS)" >> $@
+	@echo "wait_on_run -timeout $(VIVADO_IMPL_TIMEOUT) impl_1" >> $@
 	@echo "launch_runs impl_1 -to_step write_bitstream" >> $@
-	@echo "wait_on_run -timeout 60 impl_1" >> $@
+	@echo "wait_on_run -timeout $(VIVADO_BITSTREAM_TIMEOUT) impl_1" >> $@
 
-vivado/syn_emu.tcl: vivado
+vivado/syn_emu.tcl: vivado $(ESP_ROOT)/utils/make/vivado.mk $(ESP_ROOT)/constraints/$(BOARD)/Makefile.inc
 	$(QUIET_INFO)echo "generating synthesis script for Vivado"
 	@$(RM) $@
 	@echo "open_project $(DESIGN)-chip-emu.xpr" > $@
+ifneq ("$(VIVADO_MAX_THREADS)","")
+	@echo "set_param general.maxThreads $(VIVADO_MAX_THREADS)" >> $@
+endif
 	@echo "update_ip_catalog" >> $@
 	@echo "update_compile_order -fileset sources_1" >> $@
 	@echo "reset_run impl_1" >> $@
@@ -380,39 +392,44 @@ vivado/syn_emu.tcl: vivado
 #	@echo "synth_design -rtl -name rtl_1" >> $@
 #	@echo "synth_design -directive runtimeoptimize -resource_sharing off -keep_equivalent_registers -no_lc -rtl -name rtl_1" >> $@
 #	@echo "synth_design -resource_sharing off -keep_equivalent_registers -no_lc -rtl -name rtl_1" >> $@
-	@echo "launch_runs synth_1 -jobs 12" >> $@
+	@echo "launch_runs synth_1 -jobs $(VIVADO_JOBS)" >> $@
 	@echo "get_ips" >> $@
-	@echo "wait_on_run -timeout 720 synth_1" >> $@
+	@echo "wait_on_run -timeout $(VIVADO_SYN_TIMEOUT) synth_1" >> $@
 	@echo "set_msg_config -suppress -id {Drc 23-20}" >> $@
-	@echo "launch_runs impl_1 -jobs 12" >> $@
-	@echo "wait_on_run -timeout 720 impl_1" >> $@
+	@echo "launch_runs impl_1 -jobs $(VIVADO_JOBS)" >> $@
+	@echo "wait_on_run -timeout $(VIVADO_IMPL_TIMEOUT) impl_1" >> $@
 	@echo "launch_runs impl_1 -to_step write_bitstream" >> $@
-	@echo "wait_on_run -timeout 60 impl_1" >> $@
+	@echo "wait_on_run -timeout $(VIVADO_BITSTREAM_TIMEOUT) impl_1" >> $@
 
-vivado/program.tcl: vivado
+vivado/program.tcl: vivado $(ESP_ROOT)/utils/make/vivado.mk $(ESP_ROOT)/constraints/$(BOARD)/Makefile.inc
 	$(QUIET_INFO)echo "generating programming script for $(PART)"
 	@$(RM) $@
 	@echo "set fpga_host [lindex \$$argv 0]" >> $@
 	@echo "set port [lindex \$$argv 1]" >> $@
 	@echo "set part [lindex \$$argv 2]" >> $@
 	@echo "set bit [lindex \$$argv 3]" >> $@
+	@echo "set aliases [lrange \$$argv 4 end]" >> $@
+	@echo "set part_matches [concat [list \$$part] \$$aliases]" >> $@
 	@echo "" >> $@
 	@echo "open_hw_manager" >> $@
 	@echo "connect_hw_server -url \$$fpga_host:\$$port" >> $@
 	@echo "puts \"Connected to \$$fpga_host\"" >> $@
-	@echo "puts \"Searching for \$$part...\"" >> $@
+	@echo "puts \"Searching for [join \$$part_matches {, }]...\"" >> $@
 	@echo "" >> $@
 	@echo "foreach cable [get_hw_targets ] {" >> $@
 	@echo "    open_hw_target \$$cable" >> $@
-	@echo "    set dev [get_hw_devices]" >> $@
-	@echo "    if [string match -nocase \"\$$part*\" \$$dev] {" >> $@
-	@echo "	puts \"Programming \$$part ...\"" >> $@
-	@echo "	set_property PROGRAM.FILE \$$bit \$$dev" >> $@
-	@echo "	program_hw_devices \$$dev" >> $@
-	@echo "	close_hw_target" >> $@
-	@echo "	disconnect_hw_server" >> $@
-	@echo "	close_hw" >> $@
-	@echo "	exit" >> $@
+	@echo "    foreach dev [get_hw_devices] {" >> $@
+	@echo "	foreach expected \$$part_matches {" >> $@
+	@echo "	    if [string match -nocase \"\$$expected*\" \$$dev] {" >> $@
+	@echo "		puts \"Programming \$$dev (matched \$$expected) ...\"" >> $@
+	@echo "		set_property PROGRAM.FILE \$$bit \$$dev" >> $@
+	@echo "		program_hw_devices \$$dev" >> $@
+	@echo "		close_hw_target" >> $@
+	@echo "		disconnect_hw_server" >> $@
+	@echo "		close_hw" >> $@
+	@echo "		exit" >> $@
+	@echo "	    }" >> $@
+	@echo "	}" >> $@
 	@echo "    }" >> $@
 	@echo "    close_hw_target" >> $@
 	@echo "}" >> $@
@@ -550,7 +567,7 @@ vivado-prog-fpga: vivado/program.tcl
 	@cd vivado; \
 	bit=$(DESIGN).runs/impl_1/$(TOP).bit; \
 	if test -r $$bit; then \
-		vivado $(VIVADO_BATCH_OPT) -source program.tcl -tclargs $(FPGA_HOST) $(XIL_HW_SERVER_PORT) $(PART) $$bit; \
+		vivado $(VIVADO_BATCH_OPT) -source program.tcl -tclargs $(FPGA_HOST) $(XIL_HW_SERVER_PORT) $(PART) $$bit $(PROGRAM_PART_ALIASES); \
 	else \
 		echo $(SPACES)"ERROR: bistream not found; please run target vivado-syn first"; \
 	fi; \

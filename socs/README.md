@@ -16,9 +16,9 @@ board or ASIC technology:
 
 * `xilinx-vcu128-xcvu37p`: Xilinx Virtex UltraScale+ FPGA VCU128
 
-* `xilinx-zcu102-xczu9eg`: Xilinx Zynq UltraScale+ MPSoC ZCU102 (WIP)
+* `xilinx-zcu102-xczu9eg`: Xilinx Zynq UltraScale+ MPSoC ZCU102
 
-* `xilinx-zcu106-xczu7ev`: Xilinx Zynq UltraScale+ MPSoC ZCU106 (WIP)
+* `xilinx-zcu106-xczu7ev`: Xilinx Zynq UltraScale+ MPSoC ZCU106
 
 Each working folder contains `top.vhd`, a wrapper specific to each FPGA
 or ASIC target. `top.vhd` wraps the top level module of the SoC

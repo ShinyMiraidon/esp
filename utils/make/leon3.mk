@@ -3,7 +3,8 @@
 
 include $(ESP_ROOT)/utils/make/leon3_sw.mk
 
-KCFLAGS = -Wno-error=attribute-alias
+LINUX_KCFLAGS = -fcommon
+LINUX_HOSTCFLAGS = -fcommon
 
 soft: leon3-soft $(SOFT_BUILD)/prom.srec $(SOFT_BUILD)/ram.srec $(SOFT_BUILD)/prom.bin $(SOFT_BUILD)/systest.bin $(SOFT_BUILD)/ram.vhx
 
@@ -36,10 +37,10 @@ $(SOFT_BUILD)/prom.o: $(BOOTROM_PATH)/prom.S $(BOOTROM_PATH)/prom.h
 	@mkdir -p $(SOFT_BUILD)
 	$(QUIET_AS) $(CROSS_COMPILE_ELF)gcc -c -I$(BOOTROM_PATH) $< -o $@
 
-$(SOFT_BUILD)/prom.exe: $(SOFT_BUILD)/prom.o
+$(SOFT_BUILD)/prom.exe: $(SOFT_BUILD)/prom.o $(UTILS_GRLIB)/mkprom2/linkprom
 	$(QUIET_CC) $(CROSS_COMPILE_ELF)gcc \
 		-nostdlib \
-		-Tlinkprom -N \
+		-T$(UTILS_GRLIB)/mkprom2/linkprom -N \
 		-nostartfiles \
 		-o $@ $<
 

@@ -66,6 +66,26 @@ SSH_PORT ?= 22
 ESPLINK_IP ?=
 ESPLINK_PORT ?= 46392
 
+# ZCU102 PS Linux host used by the Zynq PS fpga-run backend.
+# ZYNQ_PS_HOST may include a user, for example root@zcu102-ps.
+# If no user is included, root is used by default.
+ZYNQ_PS_HOST ?=
+ZYNQ_PS_USER ?= root
+ZYNQ_PS_SSH_PORT ?= $(SSH_PORT)
+ZYNQ_PS_RUN_DIR ?= .
+ZYNQ_PS_SSH_RUN_OPTS ?= -tt
+ZYNQ_PS_SUDO ?=
+ZYNQ_PS_PEEK ?= ./esp_peek
+ZYNQ_PS_LOADER ?= ./esp_load_bootrom_zynq
+ZYNQ_PS_LOADER_CPU ?= $(CPU_ARCH)
+ZYNQ_PS_DRAM_PATH ?= esp
+ZYNQ_PS_LOADER_OPTS ?= --cpu $(ZYNQ_PS_LOADER_CPU) $(ZYNQ_PS_DRAM_PATH_OPTS)
+ZYNQ_PS_WAKE_ADDR_ariane ?= 0x0460090384
+ZYNQ_PS_WAKE_ADDR_ibex ?= 0x0460090384
+ZYNQ_PS_WAKE_ADDR_leon3 ?= 0x0480090384
+ZYNQ_PS_WAKE_ADDR_AUTO = $(ZYNQ_PS_WAKE_ADDR_$(ZYNQ_PS_LOADER_CPU))
+ZYNQ_PS_WAKE_ADDR ?= $(if $(strip $(ZYNQ_PS_WAKE_ADDR_AUTO)),$(ZYNQ_PS_WAKE_ADDR_AUTO),0x0460090384)
+
 # MAC address for Linux if using IP address reservation (e.g. 00aabb33cc77)
 # LINUX_MAC ?=
 
