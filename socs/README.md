@@ -15,8 +15,8 @@ programming targets from the selected directory.
 | `xilinx-vc707-xc7vx485t` | Xilinx VC707, Virtex-7 XC7VX485T |
 | `xilinx-vcu118-xcvu9p` | Xilinx VCU118, Virtex UltraScale+ XCVU9P |
 | `xilinx-vcu128-xcvu37p` | Xilinx VCU128, Virtex UltraScale+ XCVU37P |
-| `xilinx-zcu102-xczu9eg` | Xilinx ZCU102, Zynq UltraScale+ XCZU9EG (work in progress) |
-| `xilinx-zcu106-xczu7ev` | Xilinx ZCU106, Zynq UltraScale+ XCZU7EV (work in progress) |
+| `xilinx-zcu102-xczu9eg` | Xilinx ZCU102, Zynq UltraScale+ XCZU9EG |
+| `xilinx-zcu106-xczu7ev` | Xilinx ZCU106, Zynq UltraScale+ XCZU7EV |
 
 ## ASIC Targets
 

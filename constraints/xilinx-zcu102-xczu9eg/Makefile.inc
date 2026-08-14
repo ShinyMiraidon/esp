@@ -5,3 +5,4 @@ PART=xczu9eg
 PACKAGE=ffvb1156
 PROTOBOARD=xilinx.com:zcu102:part0:3.3
 SPEED=2-e
+PROGRAM_PART_ALIASES=xczu9

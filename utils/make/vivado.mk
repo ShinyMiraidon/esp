@@ -546,30 +546,35 @@ vivado/syn_emu.tcl: vivado
 	@echo "launch_runs impl_1 -to_step write_bitstream" >> $@
 	@echo "wait_on_run -timeout 60 impl_1" >> $@
 
-vivado/program.tcl: vivado
+vivado/program.tcl: vivado $(ESP_ROOT)/utils/make/vivado.mk $(ESP_ROOT)/constraints/$(BOARD)/Makefile.inc
 	$(QUIET_INFO)echo "generating programming script for $(PART)"
 	@$(RM) $@
 	@echo "set fpga_host [lindex \$$argv 0]" >> $@
 	@echo "set port [lindex \$$argv 1]" >> $@
 	@echo "set part [lindex \$$argv 2]" >> $@
 	@echo "set bit [lindex \$$argv 3]" >> $@
+	@echo "set aliases [lrange \$$argv 4 end]" >> $@
+	@echo "set part_matches [concat [list \$$part] \$$aliases]" >> $@
 	@echo "" >> $@
 	@echo "open_hw_manager" >> $@
 	@echo "connect_hw_server -url \$$fpga_host:\$$port" >> $@
 	@echo "puts \"Connected to \$$fpga_host\"" >> $@
-	@echo "puts \"Searching for \$$part...\"" >> $@
+	@echo "puts \"Searching for [join \$$part_matches {, }]...\"" >> $@
 	@echo "" >> $@
 	@echo "foreach cable [get_hw_targets ] {" >> $@
 	@echo "    open_hw_target \$$cable" >> $@
-	@echo "    set dev [get_hw_devices]" >> $@
-	@echo "    if [string match -nocase \"\$$part*\" \$$dev] {" >> $@
-	@echo "	puts \"Programming \$$part ...\"" >> $@
-	@echo "	set_property PROGRAM.FILE \$$bit \$$dev" >> $@
-	@echo "	program_hw_devices \$$dev" >> $@
-	@echo "	close_hw_target" >> $@
-	@echo "	disconnect_hw_server" >> $@
-	@echo "	close_hw" >> $@
-	@echo "	exit" >> $@
+	@echo "    foreach dev [get_hw_devices] {" >> $@
+	@echo "	foreach expected \$$part_matches {" >> $@
+	@echo "	    if [string match -nocase \"\$$expected*\" \$$dev] {" >> $@
+	@echo "		puts \"Programming \$$dev (matched \$$expected) ...\"" >> $@
+	@echo "		set_property PROGRAM.FILE \$$bit \$$dev" >> $@
+	@echo "		program_hw_devices \$$dev" >> $@
+	@echo "		close_hw_target" >> $@
+	@echo "		disconnect_hw_server" >> $@
+	@echo "		close_hw" >> $@
+	@echo "		exit" >> $@
+	@echo "	    }" >> $@
+	@echo "	}" >> $@
 	@echo "    }" >> $@
 	@echo "    close_hw_target" >> $@
 	@echo "}" >> $@
@@ -697,7 +702,7 @@ vivado-prog-fpga: vivado/program.tcl
 	@cd vivado; \
 	bit=$(DESIGN).runs/impl_1/$(TOP).bit; \
 	if test -r $$bit; then \
-		vivado $(VIVADO_BATCH_OPT) -source program.tcl -tclargs $(FPGA_HOST) $(XIL_HW_SERVER_PORT) $(PART) $$bit; \
+		vivado $(VIVADO_BATCH_OPT) -source program.tcl -tclargs $(FPGA_HOST) $(XIL_HW_SERVER_PORT) $(PART) $$bit $(PROGRAM_PART_ALIASES); \
 	else \
 		echo $(SPACES)"ERROR: bitstream not found; please run target vivado-syn first"; \
 		false; \

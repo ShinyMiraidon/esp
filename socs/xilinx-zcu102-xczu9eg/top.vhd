@@ -33,20 +33,44 @@ entity top is
     uart_ctsn        : in    std_ulogic;  -- UART1_RTSN (u1i.ctsn)
     uart_rtsn        : out   std_ulogic;  -- UART1_RTSN (u1o.rtsn)
     led              : out   std_logic_vector(6 downto 0);
-    -- AHB slave outputs
-    so_hready        : in    std_ulogic;  -- transfer done
-    so_hresp         : in    std_logic_vector(1 downto 0);  -- response type
-    so_hrdata        : in    std_logic_vector(AHBDW - 1 downto 0);  -- read data bus
-    -- AHB slave inputs
-    si_htrans        : out   std_logic_vector(1 downto 0);  -- transfer type
-    si_haddr         : out   std_logic_vector(31 downto 0);  -- address bus (byte)
-    si_hwrite        : out   std_ulogic;  -- read/write
-    si_hsize         : out   std_logic_vector(2 downto 0);  -- transfer size
-    si_hburst        : out   std_logic_vector(2 downto 0);  -- burst type
-    si_hprot         : out   std_logic_vector(3 downto 0);  -- protection control
-    si_hwdata        : out   std_logic_vector(AHBDW - 1 downto 0); -- write data bus
-    si_hsel          : out   std_ulogic;  -- slave selected
-    si_hready        : out   std_ulogic;  -- AHB ready in
+    -- DDR AXI master interface (ESP -> Zynq MP S_AXI_HPC0_FPD)
+    ddr_awid         : out   std_logic_vector(5 downto 0);
+    ddr_awaddr       : out   std_logic_vector(GLOB_PHYS_ADDR_BITS - 1 downto 0);
+    ddr_awlen        : out   std_logic_vector(7 downto 0);
+    ddr_awsize       : out   std_logic_vector(2 downto 0);
+    ddr_awburst      : out   std_logic_vector(1 downto 0);
+    ddr_awlock       : out   std_logic;
+    ddr_awcache      : out   std_logic_vector(3 downto 0);
+    ddr_awprot       : out   std_logic_vector(2 downto 0);
+    ddr_awqos        : out   std_logic_vector(3 downto 0);
+    ddr_awvalid      : out   std_logic;
+    ddr_awready      : in    std_logic;
+    ddr_wdata        : out   std_logic_vector(AXIDW - 1 downto 0);
+    ddr_wstrb        : out   std_logic_vector(AW - 1 downto 0);
+    ddr_wlast        : out   std_logic;
+    ddr_wvalid       : out   std_logic;
+    ddr_wready       : in    std_logic;
+    ddr_bid          : in    std_logic_vector(5 downto 0);
+    ddr_bresp        : in    std_logic_vector(1 downto 0);
+    ddr_bvalid       : in    std_logic;
+    ddr_bready       : out   std_logic;
+    ddr_arid         : out   std_logic_vector(5 downto 0);
+    ddr_araddr       : out   std_logic_vector(GLOB_PHYS_ADDR_BITS - 1 downto 0);
+    ddr_arlen        : out   std_logic_vector(7 downto 0);
+    ddr_arsize       : out   std_logic_vector(2 downto 0);
+    ddr_arburst      : out   std_logic_vector(1 downto 0);
+    ddr_arlock       : out   std_logic;
+    ddr_arcache      : out   std_logic_vector(3 downto 0);
+    ddr_arprot       : out   std_logic_vector(2 downto 0);
+    ddr_arqos        : out   std_logic_vector(3 downto 0);
+    ddr_arvalid      : out   std_logic;
+    ddr_arready      : in    std_logic;
+    ddr_rid          : in    std_logic_vector(5 downto 0);
+    ddr_rdata        : in    std_logic_vector(AXIDW - 1 downto 0);
+    ddr_rresp        : in    std_logic_vector(1 downto 0);
+    ddr_rlast        : in    std_logic;
+    ddr_rvalid       : in    std_logic;
+    ddr_rready       : out   std_logic;
     -- AHB master inputs
     mi_hready        : out   std_ulogic;  -- transfer done
     mi_hresp         : out   std_logic_vector(1 downto 0);  -- response type
@@ -72,15 +96,15 @@ constant CPU_FREQ : integer := 75000;  -- cpu frequency in KHz
   signal rstn      : std_ulogic;
   signal lock  : std_ulogic;
 
+  -- Memory controller DDR4
+  signal ddr_axi_si        : axi_mosi_vector(0 to MEM_ID_RANGE_MSB);
+  signal ddr_axi_so        : axi_somi_vector(0 to MEM_ID_RANGE_MSB);
+
   -- UART
   signal uart_rxd_int  : std_logic;       -- UART1_RX (u1i.rxd)
   signal uart_txd_int  : std_logic;       -- UART1_TX (u1o.txd)
   signal uart_ctsn_int : std_logic;       -- UART1_RTSN (u1i.ctsn)
   signal uart_rtsn_int : std_logic;       -- UART1_RTSN (u1o.rtsn)
-
-  -- Memory controller DDR4
-  signal ddr_ahbsi        : ahb_slv_in_vector_type(0 to MEM_ID_RANGE_MSB);
-  signal ddr_ahbso        : ahb_slv_out_vector_type(0 to MEM_ID_RANGE_MSB);
 
   -- DVI (unused on this board)
   signal dvi_apbi  : apb_slv_in_type;
@@ -145,7 +169,7 @@ begin
   led3_pad : outpad generic map (tech => CFG_FABTECH, level => cmos, voltage => x33v)
     port map (led(3), '0');
   led4_pad : outpad generic map (tech => CFG_FABTECH, level => cmos, voltage => x33v)
-    port map (led(4), ddr_ahbso(0).hready);
+    port map (led(4), ddr_axi_so(0).ar.ready);
 
   -- unused
   led1_pad : outpad generic map (tech => CFG_FABTECH, level => cmos, voltage => x33v)
@@ -166,26 +190,63 @@ begin
   uart_rtsn_pad : outpad generic map (level => cmos, voltage => x33v, tech => CFG_FABTECH) port map (uart_rtsn, uart_rtsn_int);
 
   ----------------------------------------------------------------------
-  --- PS-side DDR4 interface through Xilinx AHB-L-to-AXI adapter
+  --- PS-side DDR4 interface wired directly to the ESP AXI memory port
   ----------------------------------------------------------------------
-  si_hready             <= ddr_ahbsi(0).hready;
-  si_hsel               <= ddr_ahbsi(0).hsel(0);
-  si_htrans             <= ddr_ahbsi(0).htrans;
-  si_haddr(31)          <= '0'; -- ZCU102 has fixed address map
-  si_haddr(30 downto 0) <= ddr_ahbsi(0).haddr(30 downto 0);
-  si_hwrite             <= ddr_ahbsi(0).hwrite;
-  si_hsize              <= ddr_ahbsi(0).hsize;
-  si_hburst             <= ddr_ahbsi(0).hburst;
-  si_hprot              <= ddr_ahbsi(0).hprot;
-  si_hwdata             <= ddr_ahbsi(0).hwdata;
+  gen_ddr_addr_msb : if GLOB_PHYS_ADDR_BITS > 32 generate
+    ddr_awaddr(GLOB_PHYS_ADDR_BITS - 1 downto 32) <= (others => '0');
+    ddr_araddr(GLOB_PHYS_ADDR_BITS - 1 downto 32) <= (others => '0');
+  end generate gen_ddr_addr_msb;
 
-  ddr_ahbso(0).hready  <= so_hready;
-  ddr_ahbso(0).hresp   <= so_hresp;
-  ddr_ahbso(0).hrdata  <= so_hrdata;
-  ddr_ahbso(0).hsplit  <= (others => '0');
-  ddr_ahbso(0).hirq    <= (others => '0');
-  ddr_ahbso(0).hconfig <= mig7_hconfig(0);
-  ddr_ahbso(0).hindex  <= 0;
+  ddr_awid                  <= ddr_axi_si(0).aw.id(5 downto 0);
+  -- Preserve ESP's 1 GiB DDR ABI while targeting the Zynq Linux no-map carveout
+  -- at PS DDR_LOW 0x20000000-0x5fffffff.
+  ddr_awaddr(31)            <= '0';
+  ddr_awaddr(30)            <= ddr_axi_si(0).aw.addr(29);
+  ddr_awaddr(29)            <= not ddr_axi_si(0).aw.addr(29);
+  ddr_awaddr(28 downto 0)   <= ddr_axi_si(0).aw.addr(28 downto 0);
+  ddr_awlen                 <= ddr_axi_si(0).aw.len;
+  ddr_awsize                <= ddr_axi_si(0).aw.size;
+  ddr_awburst               <= ddr_axi_si(0).aw.burst;
+  ddr_awlock                <= ddr_axi_si(0).aw.lock;
+  ddr_awcache               <= ddr_axi_si(0).aw.cache;
+  ddr_awprot                <= "011";
+  ddr_awqos                 <= ddr_axi_si(0).aw.qos;
+  ddr_awvalid               <= ddr_axi_si(0).aw.valid;
+  ddr_wdata                 <= ddr_axi_si(0).w.data;
+  ddr_wstrb                 <= ddr_axi_si(0).w.strb;
+  ddr_wlast                 <= ddr_axi_si(0).w.last;
+  ddr_wvalid                <= ddr_axi_si(0).w.valid;
+  ddr_bready                <= ddr_axi_si(0).b.ready;
+  ddr_arid                  <= ddr_axi_si(0).ar.id(5 downto 0);
+  ddr_araddr(31)            <= '0';
+  ddr_araddr(30)            <= ddr_axi_si(0).ar.addr(29);
+  ddr_araddr(29)            <= not ddr_axi_si(0).ar.addr(29);
+  ddr_araddr(28 downto 0)   <= ddr_axi_si(0).ar.addr(28 downto 0);
+  ddr_arlen                 <= ddr_axi_si(0).ar.len;
+  ddr_arsize                <= ddr_axi_si(0).ar.size;
+  ddr_arburst               <= ddr_axi_si(0).ar.burst;
+  ddr_arlock                <= ddr_axi_si(0).ar.lock;
+  ddr_arcache               <= ddr_axi_si(0).ar.cache;
+  ddr_arprot                <= "011";
+  ddr_arqos                 <= ddr_axi_si(0).ar.qos;
+  ddr_arvalid               <= ddr_axi_si(0).ar.valid;
+  ddr_rready                <= ddr_axi_si(0).r.ready;
+
+  ddr_axi_so(0).aw.ready    <= ddr_awready;
+  ddr_axi_so(0).w.ready     <= ddr_wready;
+  ddr_axi_so(0).b.id(5 downto 0) <= ddr_bid;
+  ddr_axi_so(0).b.id(XID_WIDTH - 1 downto 6) <= (others => '0');
+  ddr_axi_so(0).b.resp      <= ddr_bresp;
+  ddr_axi_so(0).b.user      <= (others => '0');
+  ddr_axi_so(0).b.valid     <= ddr_bvalid;
+  ddr_axi_so(0).ar.ready    <= ddr_arready;
+  ddr_axi_so(0).r.id(5 downto 0) <= ddr_rid;
+  ddr_axi_so(0).r.id(XID_WIDTH - 1 downto 6) <= (others => '0');
+  ddr_axi_so(0).r.data      <= ddr_rdata;
+  ddr_axi_so(0).r.resp      <= ddr_rresp;
+  ddr_axi_so(0).r.last      <= ddr_rlast;
+  ddr_axi_so(0).r.user      <= (others => '0');
+  ddr_axi_so(0).r.valid     <= ddr_rvalid;
 
   -----------------------------------------------------------------------------
   -- Host interface through Xilinx AXI-to-AHB-L adapter
@@ -232,8 +293,8 @@ begin
       uart_ctsn   => uart_ctsn_int,
       uart_rtsn   => uart_rtsn_int,
       cpuerr      => cpuerr,
-      ddr_ahbsi   => ddr_ahbsi,
-      ddr_ahbso   => ddr_ahbso,
+      ddr_axi_si  => ddr_axi_si,
+      ddr_axi_so  => ddr_axi_so,
       eth0_ahbmi  => eth0_ahbmi,
       eth0_ahbmo  => eth0_ahbmo,
       edcl_ahbmo  => edcl_ahbmo,
