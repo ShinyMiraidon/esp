@@ -15,13 +15,16 @@
  *                                         or a second board)
  *   ------------------------------------  ------------------------------------
  *   1. fill 3 pattern regions
- *   2. publish NWORDS and ORDER marker
+ *   2. publish NWORDS, ORDER, MODE
  *   3. write READY magic            --->  4. poll READY
  *                                         5. read + verify the 3 regions
  *                                         6. write back each word inverted
  *   8. poll DONE                    <---  7. write DONE magic
  *   9. verify the inverted readback
  *  10. publish error count in STATUS
+ *
+ * Read NWORDS rather than assuming it: the region size depends on the SoC's
+ * cache configuration, which this program discovers at run time (below).
  *
  * Three pattern kinds are used because they fail differently: a counter
  * catches address aliasing, walking-ones catches stuck or shorted data bits,
@@ -30,26 +33,35 @@
  * ahbslv2iolink little_end generic being wrong, say -- is obvious rather than
  * showing up as noise across every region.
  *
- * KNOWN LIMITATION -- CPU cache coherence.
+ * CACHE HANDLING
  *
- * Ariane's L1 data cache is not coherent with an external master writing
- * DRAM, and ESP's esp_flush() only reaches the L2/LLC, which this board does
- * not build (CONFIG_CACHE_EN is off in the VC707 defconfig). So:
+ * The SoC may or may not build ESP's cache hierarchy: CONFIG_CACHE_EN is on in
+ * the ASIC defconfigs and off in all the FPGA ones. Rather than split into two
+ * programs, this probes for an L2 controller and adapts:
  *
- *   - the CPU's pattern writes may sit dirty in L1 rather than in DRAM when
- *     the far side reads them, and
- *   - the CPU may read stale L1 lines rather than what the far side wrote.
+ *   caches present  -> esp_flush() at both sync points, smaller regions
+ *   caches absent   -> esp_flush() would probe an empty device list and do
+ *                      nothing, so fall back to capacity: regions sized past
+ *                      L1 so a walk evicts its own earlier lines
  *
- * IOLINK_REGION_WORDS is sized well past L1 capacity so that walking a region
- * evicts the lines written earlier in that same region, which makes both
- * directions mostly work in practice. That is a mitigation, not a fix. If
- * results look flaky on hardware, resolve it properly before trusting the
- * numbers: map the test window non-cacheable, or add an L1 invalidate. Do not
- * "fix" it by shrinking the regions.
+ * OPEN QUESTION -- Ariane's L1.
+ *
+ * esp_flush() reaches ESP's L2/LLC. It has an explicit L1 flush only for SPARC
+ * (ASI_LEON_DFLUSH); there is no RISC-V equivalent in probe.c, and the L2 path
+ * only comments that it "waits for L1 to flush first". So on Ariane it is not
+ * established that a flush makes an external master's writes visible, or that
+ * the CPU's writes have landed in DRAM. Until that is settled on hardware,
+ * define IOLINK_PARANOID to keep the large regions even when caches are
+ * present. If results look flaky, resolve it properly -- map the window
+ * non-cacheable, or add an L1 invalidate. Do not "fix" it by shrinking the
+ * regions.
  */
 
 #include <stdint.h>
 #include <stdio.h>
+
+#include <esp_accelerator.h>
+#include <esp_probe.h>
 
 #include "iolink_rw_test.h"
 
@@ -75,9 +87,8 @@ static const char *region_name(int region)
     }
 }
 
-/* Order writes so the far side never sees READY before the payload. A plain
- * fence is enough for ordering; it does not write back L1 (see the header
- * comment above).
+/* Order writes so the far side never sees READY before the payload. A fence
+ * orders; it does not write back L1. See the cache note above.
  */
 static inline void order_writes(void)
 {
@@ -88,15 +99,44 @@ static inline void order_writes(void)
 #endif
 }
 
+/* Push the CPU's view out / drop stale lines, as far as this SoC allows.
+ * With no ESP caches built, esp_flush() finds no devices and is a no-op; the
+ * region sizing carries the weight instead.
+ */
+static void sync_point(int have_caches)
+{
+    order_writes();
+    if (have_caches) esp_flush(ACC_COH_NONE);
+    order_writes();
+}
+
 int main(int argc, char **argv)
 {
+    struct esp_device *l2s = NULL, *llcs = NULL;
     int region, errors, tot_errors = 0;
+    int nl2, nllc, have_caches;
+    uint32_t region_words;
     uint32_t i;
 
     printf("I/O link read/write test\n");
+
+    /* Discover the cache configuration rather than assuming it. */
+    nl2         = probe(&l2s, VENDOR_CACHE, DEVID_L2_CACHE, DEVNAME_L2_CACHE);
+    nllc        = probe(&llcs, VENDOR_CACHE, DEVID_LLC_CACHE, DEVNAME_LLC_CACHE);
+    have_caches = (nl2 > 0);
+
+#ifdef IOLINK_PARANOID
+    region_words = IOLINK_REGION_WORDS_NOCOH;
+#else
+    region_words = have_caches ? IOLINK_REGION_WORDS_COH : IOLINK_REGION_WORDS_NOCOH;
+#endif
+
+    printf("  caches   : %s (%d L2, %d LLC)\n", have_caches ? "present -> flushing at sync points" :
+                                                              "absent  -> relying on region size",
+           nl2, nllc);
     printf("  window   : 0x%08x\n", (unsigned)IOLINK_TEST_BASE);
-    printf("  regions  : %d x %u words (%u KiB each)\n", IOLINK_NREGIONS, (unsigned)IOLINK_REGION_WORDS,
-           (unsigned)(IOLINK_REGION_WORDS * 4 / 1024));
+    printf("  regions  : %d x %u words (%u KiB each)\n", IOLINK_NREGIONS, (unsigned)region_words,
+           (unsigned)(region_words * 4 / 1024));
 
     /* Phase 0: control. Prove the window itself works before blaming the
      * link for anything. A failure here is a memory or address-map problem,
@@ -117,21 +157,22 @@ int main(int argc, char **argv)
     /* Phase 1: publish the patterns for the far side to verify. */
     printf("\n[1] writing %d pattern regions\n", IOLINK_NREGIONS);
     for (region = 0; region < IOLINK_NREGIONS; region++) {
-        volatile uint32_t *p = data + (uint32_t)region * IOLINK_REGION_WORDS;
-        for (i = 0; i < IOLINK_REGION_WORDS; i++)
+        volatile uint32_t *p = data + (uint32_t)region * region_words;
+        for (i = 0; i < region_words; i++)
             p[i] = pattern(region, i);
         printf("    region %d (%s) written\n", region, region_name(region));
     }
 
-    mbox[IOLINK_MBOX_NWORDS] = IOLINK_REGION_WORDS;
+    mbox[IOLINK_MBOX_NWORDS] = region_words;
     mbox[IOLINK_MBOX_ORDER]  = IOLINK_ORDER_MARKER;
+    mbox[IOLINK_MBOX_MODE]   = (uint32_t)have_caches;
     mbox[IOLINK_MBOX_STATUS] = 0;
     mbox[IOLINK_MBOX_DONE]   = 0;
-    order_writes();
+    sync_point(have_caches);
 
     printf("\n[2] signalling READY, waiting for the far side\n");
     mbox[IOLINK_MBOX_READY] = IOLINK_MAGIC_READY;
-    order_writes();
+    sync_point(have_caches);
 
     /* Phase 3: bounded wait, so a dead link reports instead of hanging. */
     {
@@ -148,31 +189,39 @@ int main(int argc, char **argv)
         printf("    DONE after %u polls\n", (unsigned)spins);
     }
 
+    /* Drop anything stale before trusting what we read back. */
+    sync_point(have_caches);
+
     /* Phase 4: verify what the far side wrote back. */
     printf("\n[3] verifying inverted readback\n");
     for (region = 0; region < IOLINK_NREGIONS; region++) {
-        volatile uint32_t *p = data + (uint32_t)region * IOLINK_REGION_WORDS;
-        uint32_t first_bad    = 0xFFFFFFFFu;
+        volatile uint32_t *p = data + (uint32_t)region * region_words;
+        uint32_t first_bad    = 0;
+        int found_bad         = 0;
         errors                = 0;
-        for (i = 0; i < IOLINK_REGION_WORDS; i++) {
+        for (i = 0; i < region_words; i++) {
             uint32_t want = ~pattern(region, i);
             if (p[i] != want) {
-                if (errors == 0) first_bad = i;
+                if (!found_bad) {
+                    first_bad = i;
+                    found_bad = 1;
+                }
                 errors++;
             }
         }
         tot_errors += errors;
         if (errors) {
-            uint32_t bad = first_bad;
-            printf("    region %d (%-12s) %d errors; first at word %u\n", region, region_name(region), errors, (unsigned)bad);
-            printf("      expected 0x%08x  got 0x%08x\n", (unsigned)~pattern(region, bad), (unsigned)p[bad]);
+            printf("    region %d (%-12s) %d errors; first at word %u\n", region, region_name(region), errors,
+                   (unsigned)first_bad);
+            printf("      expected 0x%08x  got 0x%08x\n", (unsigned)~pattern(region, first_bad),
+                   (unsigned)p[first_bad]);
         } else {
             printf("    region %d (%-12s) ok\n", region, region_name(region));
         }
     }
 
     mbox[IOLINK_MBOX_STATUS] = (uint32_t)tot_errors;
-    order_writes();
+    sync_point(have_caches);
 
     if (tot_errors)
         printf("\nFAILED: %d total errors\n", tot_errors);
