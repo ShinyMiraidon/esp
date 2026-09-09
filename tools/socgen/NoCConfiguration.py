@@ -9,7 +9,6 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter.ttk import Separator
 from thirdparty import *
-import Pmw
 import xml.etree.ElementTree
 
 import functools
