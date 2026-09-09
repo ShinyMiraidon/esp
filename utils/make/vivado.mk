@@ -303,6 +303,25 @@ ifeq ($(CONFIG_ETH_EN),y)
 		echo $(SPACES)"WARNING: no SGMII IP was found"; \
 	fi;
 endif
+ifeq ($(CONFIG_IOLINK_EN),y)
+	@if test -r $(ESP_ROOT)/constraints/$(BOARD)/aurora.xci; then \
+		echo $(SPACES)"INFO including Aurora IP for the I/O link"; \
+		mkdir -p vivado/aurora; \
+		cp $(ESP_ROOT)/constraints/$(BOARD)/aurora.xci ./vivado/aurora; \
+		echo "set_property target_language verilog [current_project]" >> $@; \
+		echo "import_ip -files ./aurora/aurora.xci" >> $@; \
+		echo "generate_target  all [get_ips aurora] -force" >> $@; \
+	elif test -r $(ESP_ROOT)/constraints/$(BOARD)/aurora.tcl; then \
+		echo $(SPACES)"INFO including Aurora IP for the I/O link"; \
+		mkdir -p vivado/aurora; \
+		cp $(ESP_ROOT)/constraints/$(BOARD)/aurora.tcl ./vivado/aurora; \
+		echo "set_property target_language verilog [current_project]" >> $@; \
+		echo "source ./aurora/aurora.tcl" >> $@; \
+		echo "generate_target  all [get_ips aurora] -force" >> $@; \
+	else \
+		echo $(SPACES)"WARNING: CONFIG_IOLINK_EN is set but no Aurora IP was found for $(BOARD)"; \
+	fi;
+endif
 	@if test -r $(UTILS_GRLIB)/netlists/$(TECHLIB); then \
 		echo "import_files $(UTILS_GRLIB)/netlists/$(TECHLIB)" >> $@; \
 	fi;

@@ -91,5 +91,3 @@ set_property -dict [list \
                         CONFIG.drp_mode {Native} \
                         CONFIG.C_USE_BYTESWAP {false} \
                        ] [get_ips aurora]
-
-generate_target all [get_ips aurora] -force
