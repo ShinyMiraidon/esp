@@ -589,7 +589,8 @@ begin
         hindex        => CFG_GRETH + CFG_DSU_ETH,
         io_bitwidth   => CFG_IOLINK_BITS,
         word_bitwidth => 32,
-        little_end    => 0)
+        little_end    => 0,
+        credit_depth  => CFG_IOLINK_CREDITS)
       port map (
         clk           => tile_clk,
         rstn          => rst,

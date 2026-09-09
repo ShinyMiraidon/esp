@@ -263,6 +263,9 @@ class SoC_Config():
         line = fp.readline()
         item = line.split()
         self.iolink_width.set(int(item[2]))
+        line = fp.readline()
+        item = line.split()
+        self.iolink_credits.set(int(item[2]))
         # Mem Link
         line = fp.readline()
         item = line.split()
@@ -401,6 +404,8 @@ class SoC_Config():
             fp.write("#CONFIG_IOLINK_EN is not set\n")
         fp.write("CONFIG_IOLINK_WIDTH = " +
                  str(self.iolink_width.get()) + "\n")
+        fp.write("CONFIG_IOLINK_CREDITS = " +
+                 str(self.iolink_credits.get()) + "\n")
         fp.write("CONFIG_MEM_LINK_WIDTH = " +
                  str(self.mem_link_width.get()) + "\n")
         if self.svga_en.get() == 1:
@@ -547,6 +552,7 @@ class SoC_Config():
         self.eth_en = IntVar(master=tk_master)
         self.iolink_en = IntVar(master=tk_master)
         self.iolink_width = IntVar(master=tk_master)
+        self.iolink_credits = IntVar(master=tk_master)
         self.mem_link_width = IntVar(master=tk_master)
         self.svga_en = IntVar(master=tk_master)
         # Debug Link

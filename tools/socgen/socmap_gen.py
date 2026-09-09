@@ -290,6 +290,7 @@ class soc_config:
         self.has_eth = soc.eth_en.get()
         self.has_iolink = soc.iolink_en.get()
         self.iolink_width = soc.iolink_width.get()
+        self.iolink_credits = soc.iolink_credits.get()
         self.has_sgmii = soc.HAS_SGMII
         self.has_jtag = soc.jtag_en.get()
         if self.coherence:
@@ -645,7 +646,12 @@ def print_constants(fp, soc, esp_config):
     fp.write("  constant CFG_IOLINK_EN : integer := " +
              str(soc.iolink_en.get()) + ";\n")
     fp.write("  constant CFG_IOLINK_BITS : integer := " +
-             str(soc.iolink_width.get()) + ";\n\n")
+             str(soc.iolink_width.get()) + ";\n")
+    # Outstanding-word budget for the I/O link credit flow control. Must be
+    # a power of 2: it sizes gray-code async FIFOs in iolink2ahbm and
+    # ahbslv2iolink, whose CDC is only safe when the pointer wrap is 2^n.
+    fp.write("  constant CFG_IOLINK_CREDITS : integer := " +
+             str(soc.iolink_credits.get()) + ";\n\n")
 
     fp.write("  ------ Custom Memory Link to FPGA for DDR access\n")
     fp.write("  constant CFG_MEM_LINK_BITS : integer := " +

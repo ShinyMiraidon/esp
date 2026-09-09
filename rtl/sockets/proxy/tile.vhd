@@ -1027,7 +1027,8 @@ package tile is
       hindex        : integer range 0 to NAHBSLV - 1 := 0;
       io_bitwidth   : integer range 1 to ARCH_BITS   := 32;  -- power of 2, <= word_bitwidth
       word_bitwidth : integer range 1 to ARCH_BITS   := 32;  -- 32 or 64
-      little_end    : integer range 0 to 1           := 0);
+      little_end    : integer range 0 to 1           := 0;
+      credit_depth  : integer range 1 to 1024        := 8);
     port (
       clk           : in  std_ulogic;
       rstn          : in  std_ulogic;
@@ -1051,7 +1052,8 @@ package tile is
       hconfig       : ahb_config_type;
       io_bitwidth   : integer range 1 to ARCH_BITS := 32;  -- power of 2, <= word_bitwidth
       word_bitwidth : integer range 1 to ARCH_BITS := 32;  -- 32 or 64
-      little_end    : integer range 0 to 1         := 0);
+      little_end    : integer range 0 to 1         := 0;
+      credit_depth  : integer range 1 to 1024        := 8);
     port (
       clk           : in  std_ulogic;
       rstn          : in  std_ulogic;

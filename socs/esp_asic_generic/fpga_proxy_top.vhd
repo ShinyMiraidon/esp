@@ -1239,7 +1239,8 @@ begin  -- architecture rtl
         hconfig => iolink_hconfig,
         io_bitwidth => CFG_IOLINK_BITS,
         word_bitwidth => 32,
-        little_end => 0 )
+        little_end => 0,
+        credit_depth => CFG_IOLINK_CREDITS )
       port map (
         clk           => main_clk,
         rstn          => rstn,

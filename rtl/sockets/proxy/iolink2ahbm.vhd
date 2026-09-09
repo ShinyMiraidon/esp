@@ -54,7 +54,15 @@ entity iolink2ahbm is
     hindex        : integer range 0 to NAHBSLV - 1 := 0;
     io_bitwidth   : integer range 1 to 64          := 32;  -- power of 2, <= word_bitwidth
     word_bitwidth : integer range 1 to 64          := 32;  -- 32 or 64
-    little_end    : integer range 0 to 1           := 0);
+    little_end    : integer range 0 to 1           := 0;
+    -- Outstanding-word budget for the credit-based flow control. It also sets
+    -- the depth of the gray-code async FIFOs below, so it MUST be a power of 2:
+    -- their clock-domain crossing is only safe when the pointer wrap is 2^n.
+    -- Both ends of a link must agree, since the receiver's FIFO has to absorb
+    -- the sender's entire budget. 8 suits the source-synchronous parallel PHY;
+    -- a serial PHY needs >= its round-trip latency in words (~256 for Aurora
+    -- 64B/66B at 10 Gb/s, whose one-way latency is 54-55 user_clk cycles).
+    credit_depth  : integer range 1 to 1024        := 8);
   port (
     clk           : in  std_ulogic;
     rstn          : in  std_ulogic;
@@ -99,7 +107,7 @@ architecture rtl of iolink2ahbm is
   signal io_rcv_data_in                       : std_logic_vector(word_bitwidth - 1 downto 0);
   signal io_rcv_full                          : std_ulogic;
 
-  constant QUEUE_DEPTH : integer := 8;
+  constant QUEUE_DEPTH : integer := credit_depth;
 
   signal credits         : integer range 0 to QUEUE_DEPTH;
   signal credit_in       : std_ulogic;
