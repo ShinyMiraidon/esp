@@ -103,13 +103,13 @@ patch_buildroot_host_fakeroot () {
     # mis-detect setgroups() on newer host distributions. Newer glibc also hides
     # the private _STAT_VER macro that this fakeroot still uses on x86 hosts.
     # Patch the extracted host-fakeroot source before Buildroot configures it.
-    ${MAKE_CMD} host-fakeroot-patch
+    command ${MAKE_CMD} host-fakeroot-patch || return 0
 
     fakeroot_src=$(find output/build -maxdepth 2 -type f \
         -path '*/host-fakeroot-*/libfakeroot.c' -print -quit)
     if [ -z "${fakeroot_src}" ]; then
-        echo "Unable to find Buildroot host-fakeroot libfakeroot.c."
-        exit 1
+        # host-fakeroot is not part of this buildroot configuration
+        return 0
     fi
 
     if grep -q "ESP_FAKEROOT_GLIBC_COMPAT" "${fakeroot_src}"; then
@@ -150,47 +150,22 @@ patch_buildroot_host_fakeroot () {
     echo "*** Patched Buildroot host-fakeroot for newer host GlibC ***"
 }
 
-patch_buildroot_host_m4 () {
-    local m4_src
-    local tmp_src
-
-    # GNU m4 1.4.18 assumes SIGSTKSZ is a preprocessor constant. Newer glibc
-    # may define it through sysconf(), which is valid C but invalid in #elif.
-    ${MAKE_CMD} host-m4-patch
-
-    m4_src=$(find output/build -maxdepth 3 -type f \
-        -path '*/host-m4-*/lib/c-stack.c' -print -quit)
-    if [ -z "${m4_src}" ]; then
-        echo "Unable to find Buildroot host-m4 c-stack.c."
-        exit 1
-    fi
-
-    if grep -q "ESP_M4_SIGSTKSZ_COMPAT" "${m4_src}"; then
-        return
-    fi
-
-    tmp_src=${m4_src}.esp-tmp
-    awk '
-        {
-            if ($0 == "#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384") {
-                print "#elif HAVE_LIBSIGSEGV"
-                print "/* ESP_M4_SIGSTKSZ_COMPAT: SIGSTKSZ may not be #if-safe on newer glibc. */"
-                next
-            }
-            print
-        }
-    ' "${m4_src}" > "${tmp_src}" || {
-        rm -f "${tmp_src}"
-        echo "Unable to patch ${m4_src} for newer host glibc."
-        exit 1
-    }
-    if ! grep -q "ESP_M4_SIGSTKSZ_COMPAT" "${tmp_src}"; then
-        rm -f "${tmp_src}"
-        echo "Unable to find SIGSTKSZ check in ${m4_src}."
-        exit 1
-    fi
-    mv "${tmp_src}" "${m4_src}"
-    echo "*** Patched Buildroot host-m4 for newer host GlibC ***"
+# The buildroot recipes further down are kept byte-identical to the ones on
+# dev, so this branch merges without conflicts. The EL10 (GCC 14 / glibc 2.39)
+# hooks that used to live inside them are attached here instead: honour a
+# MAKE= override, and apply the extra host-fakeroot fixes before any package
+# is built. Targets that run before a build are passed straight through.
+# "command" bypasses this function, so ${MAKE_CMD} is never re-entered.
+make () {
+    case "$1" in
+	distclean|defconfig|*-patch)
+	    command ${MAKE_CMD} "$@"
+	    ;;
+	*)
+	    patch_buildroot_host_fakeroot
+	    command ${MAKE_CMD} "$@"
+	    ;;
+    esac
 }
 
 configure_git_url_rewrites () {
@@ -294,6 +269,10 @@ if [ $(noyes "Skip ${src}") == "n" ]; then
     fi
 
     git reset --hard ${RISCV_GNU_TOOLCHAIN_SHA}
+    # git://anongit.freedesktop.org is unreachable from some networks; repoint
+    git submodule update --init riscv-qemu
+    git config -f riscv-qemu/.gitmodules submodule.pixman.url https://gitlab.freedesktop.org/pixman/pixman.git
+    (cd riscv-qemu && git submodule sync -- pixman)
     git submodule update --init --recursive
     ./configure --prefix=${TARGET_DIR} --disable-gdb
     cmd="${MAKE_CMD} -j ${NTHREADS}"
@@ -314,6 +293,10 @@ if [ $(noyes "Skip ${src}") == "n" ]; then
     fi
 
     git reset --hard ${RISCV_GNU_TOOLCHAIN_SHA}
+    # git://anongit.freedesktop.org is unreachable from some networks; repoint
+    git submodule update --init riscv-qemu
+    git config -f riscv-qemu/.gitmodules submodule.pixman.url https://gitlab.freedesktop.org/pixman/pixman.git
+    (cd riscv-qemu && git submodule sync -- pixman)
     git submodule update --init --recursive
     patch_glibc_for_make_4_4
     ./configure --prefix=${TARGET_DIR} --disable-gdb
@@ -339,28 +322,67 @@ if [ $(noyes "Skip buildroot?") == "n" ]; then
     	git checkout .
     	git pull
     else
-    	git clone https://git.buildroot.net/buildroot
+    	git clone https://github.com/buildroot/buildroot.git
     	cd $src
     fi
 
-if [[ "$python_en" -eq 1 ]]; then       # python enable
     git reset --hard ${BUILDROOT_SHA}
     git submodule update --init --recursive
-    git apply ${BUILDROOT_PATCH}
-    ${MAKE_CMD} distclean
-    ${MAKE_CMD} defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_python_defconfig
-    patch_buildroot_host_fakeroot
-    patch_buildroot_host_m4
-    ${MAKE_CMD} -j ${NTHREADS}
-else                                    # default
-    git reset --hard ${BUILDROOT_SHA}
-    git submodule update --init --recursive
-    ${MAKE_CMD} distclean
-    ${MAKE_CMD} defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_defconfig
-    patch_buildroot_host_fakeroot
-    patch_buildroot_host_m4
-    ${MAKE_CMD} -j ${NTHREADS}
-fi
+
+    if [[ "$python_en" -eq 1 ]]; then
+        git apply ${BUILDROOT_PATCH}
+    fi
+
+    mkdir -p output && touch output/.br-external.mk
+    make distclean
+    mkdir -p output && touch output/.br-external.mk
+
+    # Install glibc >= 2.34 compatibility patches into buildroot package
+    # directories so they are applied automatically during source extraction.
+    # These patches are harmless on older glibc (guarded by #ifndef/#undef).
+    #
+    # - host-m4-sigstksz: glibc 2.34+ changed SIGSTKSZ from a compile-time
+    #   constant to sysconf(), breaking preprocessor checks in m4-1.4.18.
+    # - host-fakeroot-glibc-compat: glibc 2.33+ removed _STAT_VER and related
+    #   macros used by fakeroot-1.20.2.
+    cp ${SCRIPT_PATH}/patches/host-m4-sigstksz.patch \
+        package/m4/0003-fix-sigstksz-glibc-2.34.patch
+    cp ${SCRIPT_PATH}/patches/host-fakeroot-glibc-compat.patch \
+        package/fakeroot/0003-fix-stat-ver-glibc-2.33.patch
+
+    if [[ "$python_en" -eq 1 ]]; then
+        make defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_python_defconfig
+    else
+        make defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_defconfig
+    fi
+
+    # On glibc >= 2.33, buildroot's fakeroot 1.20.2 compiles (thanks to the
+    # _STAT_VER patch) but cannot intercept mknod() at runtime because glibc
+    # removed __xmknod(). We must swap it with the system fakeroot BEFORE the
+    # rootfs step. To do this: build fakeroot first, swap if needed, then
+    # continue the full build.
+    GLIBC_VER=$(ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+$')
+    if [ "$(printf '%s\n' "2.33" "$GLIBC_VER" | sort -V | head -1)" = "2.33" ]; then
+        # glibc >= 2.33: build fakeroot, then swap before full build
+        make host-fakeroot -j ${NTHREADS}
+        if [ -x /usr/bin/fakeroot ]; then
+            echo ""
+            echo "*** glibc ${GLIBC_VER} detected: replacing buildroot fakeroot with system fakeroot ***"
+            echo ""
+            mv output/host/bin/fakeroot output/host/bin/fakeroot.buildroot
+            ln -s /usr/bin/fakeroot output/host/bin/fakeroot
+        else
+            echo ""
+            echo "*** glibc ${GLIBC_VER} detected but no system fakeroot found.   ***"
+            echo "*** Buildroot's fakeroot 1.20.2 cannot intercept mknod() on     ***"
+            echo "*** glibc >= 2.33. Please install fakeroot and re-run:          ***"
+            echo "***   Ubuntu/Debian: sudo apt-get install fakeroot              ***"
+            echo "***   RHEL/CentOS:   sudo yum install fakeroot (requires EPEL) ***"
+            exit 1
+        fi
+    fi
+
+    make -j ${NTHREADS}
 
     # Populate repository sysroot overlay w/ generated files (git ignores them)
     rm output/target/THIS_IS_NOT_YOUR_ROOT_FILESYSTEM

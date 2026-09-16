@@ -11,16 +11,16 @@ OPENSBI = $(SOFT)/opensbi
 soft: $(SOFT_BUILD)/prom.srec $(SOFT_BUILD)/ram.srec $(SOFT_BUILD)/prom.bin $(SOFT_BUILD)/prom.txt $(SOFT_BUILD)/prom.dump $(SOFT_BUILD)/prom.map $(SOFT_BUILD)/systest.bin $(SOFT_BUILD)/ram.vhx
 
 soft-clean:
-	$(QUIET_CLEAN)$(RM)		 	\
-			$(SOFT_BUILD)/prom.srec 	\
-			$(SOFT_BUILD)/ram.srec		\
-			$(SOFT_BUILD)/prom.exe		\
-			$(SOFT_BUILD)/prom.map		\
-			$(SOFT_BUILD)/prom.dump		\
-			$(SOFT_BUILD)/prom.txt		\
-			$(SOFT_BUILD)/systest.exe	\
-			$(SOFT_BUILD)/prom.bin		\
-			$(SOFT_BUILD)/riscv.dtb		\
+	$(QUIET_CLEAN)$(RM)			\
+		$(SOFT_BUILD)/prom.srec		\
+		$(SOFT_BUILD)/ram.srec		\
+		$(SOFT_BUILD)/prom.exe		\
+		$(SOFT_BUILD)/prom.map		\
+		$(SOFT_BUILD)/prom.dump		\
+		$(SOFT_BUILD)/prom.txt		\
+		$(SOFT_BUILD)/systest.exe	\
+		$(SOFT_BUILD)/prom.bin		\
+		$(SOFT_BUILD)/riscv.dtb		\
 		$(SOFT_BUILD)/startup.o		\
 		$(SOFT_BUILD)/main.o		\
 		$(SOFT_BUILD)/uart.o		\
@@ -113,7 +113,7 @@ $(SOFT_BUILD)/systest.exe: systest.c $(SOFT_BUILD)/uart.o $(SOFT)/common/syscall
 	@mkdir -p $(SOFT_BUILD)
 	$(QUIET_CC) $(CROSS_COMPILE_ELF)gcc $(RISCV_CFLAGS) \
 	$(SOFT)/common/syscalls.c \
-	$(RISCV_TESTS)/benchmarks/common/crt.S  \
+	$(RISCV_TESTS)/benchmarks/common/crt.S	\
 	-T $(RISCV_TESTS)/benchmarks/common/test.ld -o $@ \
 	-I$(DESIGN_PATH)/$(ESP_CFG_BUILD) \
 	$(SOFT_BUILD)/uart.o $<
@@ -145,8 +145,8 @@ $(SOFT_BUILD)/sysroot.files: $(SOFT_BUILD)/sysroot
 	$(QUIET_MAKE)$(MAKE) -C ${LINUXSRC}/usr gen_init_cpio
 	$(QUIET_INFO)echo "Generating root file-system list..."
 	@sh ${LINUXSRC}/usr/gen_initramfs_list.sh -u `id -u` -g `id -g` $< \
-	    | sed -e 's/^file \(\/bin\/busybox .*\) 755 0 0/file \1 4755 0 0/' \
-	    > $@;
+		| sed -e 's/^file \(\/bin\/busybox .*\) 755 0 0/file \1 4755 0 0/' \
+		> $@;
 	@echo "nod /dev/console 622 0 0 c 5 1" >> $@
 	@touch $@
 
@@ -154,8 +154,30 @@ $(SOFT_BUILD)/sysroot.files: $(SOFT_BUILD)/sysroot
 $(SOFT_BUILD)/sysroot.cpio: $(SOFT_BUILD)/sysroot.files
 	$(QUIET_BUILD)${LINUXSRC}/usr/gen_init_cpio $< > $@
 
+# Patch the kernel source tree for the in-tree dtc on
+# GCC >= 10 (Ubuntu 22.04+, RHEL 9+), where -fno-common is the default
+.PHONY: linux-patches
+linux-patches:
+	if grep -q -- '-fcommon' $(LINUXSRC)/scripts/dtc/Makefile; then :; \
+	else \
+		echo "	PATCH	 linux-dtc-fcommon.patch"; \
+		patch -p1 -s -d $(LINUXSRC) -i $(ESP_ROOT)/utils/toolchain/patches/linux-dtc-fcommon.patch; \
+	fi
 
-$(SOFT_BUILD)/linux-build/.config: $(LINUXSRC)/arch/$(ARCH)/configs/$(LINUX_CONFIG)
+# Patch the kernel source tree before any build step touches it.
+# Currently applies:
+#   - linux-dtc-fcommon.patch: forces -fcommon for the in-tree dtc on
+#     GCC >= 10 (Ubuntu 22.04+, RHEL 9+), where -fno-common is the default
+#     and breaks the older lex/yacc-generated host objects.
+.PHONY: linux-patches
+linux-patches:
+	@if grep -q -- '-fcommon' $(LINUXSRC)/scripts/dtc/Makefile; then :; \
+	else \
+		echo "  PATCH    linux-dtc-fcommon.patch"; \
+		patch -p1 -s -d $(LINUXSRC) -i $(ESP_ROOT)/utils/toolchain/patches/linux-dtc-fcommon.patch; \
+	fi
+
+$(SOFT_BUILD)/linux-build/.config: $(LINUXSRC)/arch/$(ARCH)/configs/$(LINUX_CONFIG) | linux-patches
 	@$(MAKE) $(SOFT_BUILD)/linux-build
 	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG)
 

@@ -55,13 +55,13 @@ patch_buildroot_host_fakeroot () {
 
     # Older Buildroot releases mis-detect setgroups() on newer hosts and use
     # glibc interfaces that are no longer exposed through public headers.
-    ${MAKE_CMD} host-fakeroot-patch
+    command ${MAKE_CMD} host-fakeroot-patch || return 0
 
     fakeroot_src=$(find output/build -maxdepth 2 -type f \
         -path '*/host-fakeroot-*/libfakeroot.c' -print -quit)
     if [ -z "${fakeroot_src}" ]; then
-        echo "Unable to find Buildroot host-fakeroot libfakeroot.c."
-        exit 1
+        # host-fakeroot is not part of this buildroot configuration
+        return 0
     fi
 
     if grep -q "ESP_FAKEROOT_GLIBC_COMPAT" "${fakeroot_src}"; then
@@ -102,47 +102,23 @@ patch_buildroot_host_fakeroot () {
     echo "*** Patched Buildroot host-fakeroot for newer host GlibC ***"
 }
 
-patch_buildroot_host_m4 () {
-    local m4_src
-    local tmp_src
-
-    # GNU m4 1.4.18 assumes SIGSTKSZ is a preprocessor constant. Newer glibc
-    # may define it through sysconf(), which is valid C but invalid in #elif.
-    ${MAKE_CMD} host-m4-patch
-
-    m4_src=$(find output/build -maxdepth 3 -type f \
-        -path '*/host-m4-*/lib/c-stack.c' -print -quit)
-    if [ -z "${m4_src}" ]; then
-        echo "Unable to find Buildroot host-m4 c-stack.c."
-        exit 1
-    fi
-
-    if grep -q "ESP_M4_SIGSTKSZ_COMPAT" "${m4_src}"; then
-        return
-    fi
-
-    tmp_src=${m4_src}.esp-tmp
-    awk '
-        {
-            if ($0 == "#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384") {
-                print "#elif HAVE_LIBSIGSEGV"
-                print "/* ESP_M4_SIGSTKSZ_COMPAT: SIGSTKSZ may not be #if-safe on newer glibc. */"
-                next
-            }
-            print
-        }
-    ' "${m4_src}" > "${tmp_src}" || {
-        rm -f "${tmp_src}"
-        echo "Unable to patch ${m4_src} for newer host glibc."
-        exit 1
-    }
-    if ! grep -q "ESP_M4_SIGSTKSZ_COMPAT" "${tmp_src}"; then
-        rm -f "${tmp_src}"
-        echo "Unable to find SIGSTKSZ check in ${m4_src}."
-        exit 1
-    fi
-    mv "${tmp_src}" "${m4_src}"
-    echo "*** Patched Buildroot host-m4 for newer host GlibC ***"
+# The buildroot recipes further down are kept byte-identical to the ones on
+# dev, so this branch merges without conflicts. The EL10 (GCC 14 / glibc 2.39)
+# hooks that used to live inside them are attached here instead: honour a
+# MAKE= override, add the host C++ flags buildroot needs, and apply the extra
+# host-fakeroot fixes before any package is built. Targets that run before a
+# build are passed straight through. "command" bypasses this function, so
+# ${MAKE_CMD} is never re-entered.
+make () {
+    case "$1" in
+	distclean|defconfig|*-patch)
+	    command ${MAKE_CMD} "$@"
+	    ;;
+	*)
+	    patch_buildroot_host_fakeroot
+	    command ${MAKE_CMD} HOST_CXXFLAGS="${LEON_BUILDROOT_HOST_CXXFLAGS}" "$@"
+	    ;;
+    esac
 }
 
 configure_git_url_rewrites () {
@@ -332,18 +308,46 @@ if [ $(noyes "Skip Linux toolchain") == "n" ]; then
 	git checkout .
 	git pull
     else
-    	git clone git://git.buildroot.net/buildroot
+    	git clone https://github.com/buildroot/buildroot.git
 	cd $src
     fi
 
     git reset --hard ${BUILDROOT_SHA}
     git submodule update --init --recursive
 
-    ${MAKE_CMD} distclean
-    ${MAKE_CMD} defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/leon3_buildroot_toolchain_defconfig
-    patch_buildroot_host_m4
-    ${MAKE_CMD} HOST_CXXFLAGS="${LEON_BUILDROOT_HOST_CXXFLAGS}" \
-	toolchain -j ${NTHREADS}
+    mkdir -p output && touch output/.br-external.mk
+    make distclean
+    mkdir -p output && touch output/.br-external.mk
+    make defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/leon3_buildroot_toolchain_defconfig
+    # Retry loop: each iteration patches newly-extracted packages that fail on modern glibc
+    for attempt in 1 2 3 4 5; do
+        # Apply glibc >= 2.33 compatibility patches for host tools
+        if [ -d output/build/host-fakeroot-*/  ]; then
+            for d in output/build/host-fakeroot-*/; do
+                patch -N -d "$d" -p1 < ${SCRIPT_PATH}/patches/host-fakeroot-glibc-compat.patch || true
+            done
+        fi
+        for f in output/build/host-m4-*/lib/c-stack.c; do
+            if [ -f "$f" ] && grep -q '#elif.*SIGSTKSZ' "$f"; then
+                sed -i 's/^#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384/#elif 0 \/* SIGSTKSZ not constant on glibc >= 2.34 *\//' "$f"
+            fi
+        done
+        # Fix GCC 5.5.0: bool++ forbidden in C++17 — change bool to char in reload.h
+        for f in output/build/host-gcc-initial-*/gcc/reload.h output/build/host-gcc-final-*/gcc/reload.h; do
+            if [ -f "$f" ] && grep -q 'bool x_spill_indirect_levels' "$f"; then
+                sed -i 's/bool x_spill_indirect_levels/char x_spill_indirect_levels/' "$f"
+                # Remove stale object file so make rebuilds
+                rm -f "$(dirname "$f")/../build/gcc/reload1.o" 2>/dev/null
+            fi
+        done
+        # Use system fakeroot if the buildroot-compiled one is broken (glibc >= 2.33)
+        if [ -x /usr/bin/fakeroot ] && [ -x output/host/bin/fakeroot ] && ! output/host/bin/fakeroot -- true 2>/dev/null; then
+            echo "*** Replacing broken buildroot fakeroot with system fakeroot ***"
+            mv output/host/bin/fakeroot output/host/bin/fakeroot.broken
+            ln -s /usr/bin/fakeroot output/host/bin/fakeroot
+        fi
+        make toolchain -j ${NTHREADS} && break || echo "*** Attempt $attempt failed, retrying with patches... ***"
+    done
 fi
 cd $TMP
 
@@ -363,19 +367,38 @@ if [ $(noyes "Skip buildroot?") == "n" ]; then
 	git checkout .
 	git pull
     else
-    	git clone git://git.buildroot.net/buildroot
+    	git clone https://github.com/buildroot/buildroot.git
 	cd $src
     fi
 
     git reset --hard ${BUILDROOT_SHA}
     git submodule update --init --recursive
 
-    ${MAKE_CMD} distclean
-    ${MAKE_CMD} defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/leon3_buildroot_defconfig
-    patch_buildroot_host_fakeroot
-    patch_buildroot_host_m4
-    ${MAKE_CMD} HOST_CXXFLAGS="${LEON_BUILDROOT_HOST_CXXFLAGS}" \
-	-j ${NTHREADS}
+    mkdir -p output && touch output/.br-external.mk
+    make distclean
+    mkdir -p output && touch output/.br-external.mk
+    make defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/leon3_buildroot_defconfig
+    # Retry loop: each iteration patches newly-extracted packages that fail on modern glibc
+    for attempt in 1 2 3 4 5; do
+        # Apply glibc >= 2.33 compatibility patches for host tools
+        if [ -d output/build/host-fakeroot-*/  ]; then
+            for d in output/build/host-fakeroot-*/; do
+                patch -N -d "$d" -p1 < ${SCRIPT_PATH}/patches/host-fakeroot-glibc-compat.patch || true
+            done
+        fi
+        for f in output/build/host-m4-*/lib/c-stack.c; do
+            if [ -f "$f" ] && grep -q '#elif.*SIGSTKSZ' "$f"; then
+                sed -i 's/^#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384/#elif 0 \/* SIGSTKSZ not constant on glibc >= 2.34 *\//' "$f"
+            fi
+        done
+        # Use system fakeroot if the buildroot-compiled one is broken (glibc >= 2.33)
+        if [ -x /usr/bin/fakeroot ] && [ -x output/host/bin/fakeroot ] && ! output/host/bin/fakeroot -- true 2>/dev/null; then
+            echo "*** Replacing broken buildroot fakeroot with system fakeroot ***"
+            mv output/host/bin/fakeroot output/host/bin/fakeroot.broken
+            ln -s /usr/bin/fakeroot output/host/bin/fakeroot
+        fi
+        make -j ${NTHREADS} && break || echo "*** Attempt $attempt failed, retrying with patches... ***"
+    done
 
     # Populate repository sysroot overlay w/ generated files (git ignores them)
     rm output/target/THIS_IS_NOT_YOUR_ROOT_FILESYSTEM
