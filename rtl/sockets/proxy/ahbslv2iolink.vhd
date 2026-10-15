@@ -594,7 +594,8 @@ begin
               v.state := early_burst_term;
             --first word of the burst
             elsif (v.load_first = '1') then
-              ahb_rcv_data_in <= hwdata_reg;
+              -- Live hwdata, not hwdata_reg: see the note in single mode.
+              ahb_rcv_data_in <= ahbreadword(ahbsi.hwdata);
               ahb_rcv_wrreq <= '1';
               v.load_first := '0';
               v.cnt := r.cnt - 1;
@@ -609,7 +610,17 @@ begin
             end if;
           -- single transaction mode
           elsif (v.burst_mode = '0') then
-            ahb_rcv_data_in <= hwdata_reg;
+            -- Sample write data HERE, in the data phase, rather than using
+            -- hwdata_reg, which sample_bus latches in the ADDRESS phase. AHB
+            -- only guarantees hwdata in the data phase, so with a compliant
+            -- master (such as noc2ahbmst, which carries CPU accesses) the
+            -- address-phase copy is whatever was on the bus before -- in
+            -- simulation 63 of 64 writes arrived as zero. hready is driven
+            -- high in this state, so this is the cycle the data phase
+            -- completes and hwdata is valid. Masters that hold hwdata from the
+            -- address phase onward (the FPGA proxy's GRLIB DMA masters) are
+            -- unaffected, which is why this never showed on the proxy.
+            ahb_rcv_data_in <= ahbreadword(ahbsi.hwdata);
             ahb_rcv_wrreq <= '1';
             v.state := recv_address;
           end if;
@@ -647,6 +658,15 @@ begin
             v.ahbsout.hrdata := ahbdrivedata(ahb_snd_data_out);
             ahb_snd_rdreq <= '1';
             v.cnt := r.cnt - 1;
+            -- Return to recv_address in the SAME cycle the last word is
+            -- delivered, as snd_data already does for writes. Waiting a cycle
+            -- (the cnt = 0 branch above) left hready high in a cycle where no
+            -- address would be captured, so a master issuing its next transfer
+            -- straight after this one had it silently dropped: every second
+            -- back-to-back read returned the previous read's data.
+            if v.cnt = 0 then
+              v.state := recv_address;
+            end if;
         end if;
       end if;
     end case; 
@@ -723,11 +743,19 @@ begin
     io_rcv_reg_next <= reg;
   end process rcv_from_chip_fsm;
 
-  rcv_from_chip_state_update : process (clk, rstn)
+  -- Clocked on io_clk_in, the clock the incoming beats and the ahb_out_fifo
+  -- write port are on, NOT on clk. This register holds the beat counter that
+  -- assembles io_bitwidth-wide beats into words. On clk it samples beats that
+  -- change on io_clk_in, and whenever the link clock is faster than clk -- as
+  -- with Aurora, where io_clk_in is user_clk -- back-to-back beats are missed
+  -- and every later word is built from the wrong halves. On the parallel
+  -- cable io_clk_in is this bridge's own clock echoed back by the far side,
+  -- the same frequency as clk, which is why this never showed there.
+  rcv_from_chip_state_update : process (io_clk_in, rstn)
   begin
     if(rstn = '0') then
       io_rcv_reg <= IO_RCV_REG_DEFAULT;
-    elsif clk'event and clk = '1' then
+    elsif io_clk_in'event and io_clk_in = '1' then
       io_rcv_reg <= io_rcv_reg_next;
     end if;
   end process rcv_from_chip_state_update;
