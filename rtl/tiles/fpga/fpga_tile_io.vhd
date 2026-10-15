@@ -112,6 +112,23 @@ entity fpga_tile_io is
     noc4_output_port_tile   : in  dma_noc_flit_type;
     noc5_output_port_tile   : in  misc_noc_flit_type;
     noc6_output_port_tile   : in  dma_noc_flit_type;
+    -- I/O link
+    --
+    -- The inputs carry defaults and the outputs may be left unassociated, so a
+    -- board that does not bring the link out does not have to mention these at
+    -- all. Only a board whose top level actually drives the link -- currently
+    -- just xilinx-vc707-xc7vx485t, over Aurora -- connects them. Without the
+    -- defaults, adding these ports would force an edit to all eight FPGA board
+    -- top levels.
+    iolink_data_oen    : out   std_logic;
+    iolink_data_in     : in    std_logic_vector(CFG_IOLINK_BITS - 1 downto 0) := (others => '0');
+    iolink_data_out    : out   std_logic_vector(CFG_IOLINK_BITS - 1 downto 0);
+    iolink_valid_in    : in    std_ulogic := '0';
+    iolink_valid_out   : out   std_ulogic;
+    iolink_clk_in      : in    std_ulogic := '0';
+    iolink_clk_out     : out   std_ulogic;
+    iolink_credit_in   : in    std_ulogic := '0';
+    iolink_credit_out  : out   std_ulogic;
     mon_noc            : in    monitor_noc_vector(1 to 6);
     mon_dvfs           : out   monitor_dvfs_type
     );
@@ -305,15 +322,15 @@ begin
       uart_ctsn          => uart_ctsn,
       uart_rtsn          => uart_rtsn,
       -- I/O link
-      iolink_data_oen    => open,
-      iolink_data_in     => (others => '0'),
-      iolink_data_out    => open,
-      iolink_valid_in    => '0',
-      iolink_valid_out   => open,
-      iolink_clk_in      => '0',
-      iolink_clk_out     => open,
-      iolink_credit_in   => '0',
-      iolink_credit_out  => open,
+      iolink_data_oen    => iolink_data_oen,
+      iolink_data_in     => iolink_data_in,
+      iolink_data_out    => iolink_data_out,
+      iolink_valid_in    => iolink_valid_in,
+      iolink_valid_out   => iolink_valid_out,
+      iolink_clk_in      => iolink_clk_in,
+      iolink_clk_out     => iolink_clk_out,
+      iolink_credit_in   => iolink_credit_in,
+      iolink_credit_out  => iolink_credit_out,
       -- NOC
       noc_clk_out        => open,  -- Global NoC clock out
       noc_clk_lock       => open,

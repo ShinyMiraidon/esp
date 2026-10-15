@@ -53,6 +53,20 @@ entity esp is
     dvi_apbo          : in  apb_slv_out_type;
     dvi_ahbmi         : out ahb_mst_in_type;
     dvi_ahbmo         : in  ahb_mst_out_type;
+    -- I/O link
+    --
+    -- Inputs default and outputs may be left open, so only a board that
+    -- actually carries the link has to connect these. See the matching note in
+    -- fpga_tile_io.vhd.
+    iolink_data_oen   : out std_logic;
+    iolink_data_in    : in  std_logic_vector(CFG_IOLINK_BITS - 1 downto 0) := (others => '0');
+    iolink_data_out   : out std_logic_vector(CFG_IOLINK_BITS - 1 downto 0);
+    iolink_valid_in   : in  std_ulogic := '0';
+    iolink_valid_out  : out std_ulogic;
+    iolink_clk_in     : in  std_ulogic := '0';
+    iolink_clk_out    : out std_ulogic;
+    iolink_credit_in  : in  std_ulogic := '0';
+    iolink_credit_out : out std_ulogic;
     mon_noc           : out monitor_noc_matrix(1 to 6, 0 to CFG_TILES_NUM-1);
     mon_acc           : out monitor_acc_vector(0 to relu(accelerators_num-1));
     mon_mem           : out monitor_mem_vector(0 to CFG_NMEM_TILE + CFG_NSLM_TILE + CFG_NSLMDDR_TILE - 1);
@@ -855,6 +869,16 @@ begin
         noc4_output_port_tile   => noc4_data_l_out(i),
         noc5_output_port_tile   => noc5_data_l_out(i),
         noc6_output_port_tile   => noc6_data_l_out(i),
+        -- I/O link, brought straight out to the board top level
+        iolink_data_oen    => iolink_data_oen,
+        iolink_data_in     => iolink_data_in,
+        iolink_data_out    => iolink_data_out,
+        iolink_valid_in    => iolink_valid_in,
+        iolink_valid_out   => iolink_valid_out,
+        iolink_clk_in      => iolink_clk_in,
+        iolink_clk_out     => iolink_clk_out,
+        iolink_credit_in   => iolink_credit_in,
+        iolink_credit_out  => iolink_credit_out,
         mon_noc            => mon_noc_s(i),
         mon_dvfs           => mon_dvfs_out(i));
     end generate io_tile;

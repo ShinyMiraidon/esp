@@ -115,7 +115,19 @@ entity sgmii_vc707 is
       apb_clk           : in    std_logic;
       apb_rstn          : in    std_logic;
       apbi              : in    apb_slv_in_type;
-      apbo              : out   apb_slv_out_type
+      apbo              : out   apb_slv_out_type;
+      -- Buffered GT reference clock, straight off the IBUFDS_GTE2.
+      --
+      -- Only one IBUFDS_GTE2 may drive a given reference clock pin pair, and
+      -- this block owns the one on gtrefclk_p/n (AH8/AH7). Anything else in
+      -- the design needing that reference -- on this board, the Aurora core
+      -- carrying the ESP I/O link over the SFP+ cage -- has to share this
+      -- buffer rather than instantiate its own.
+      --
+      -- This is the IBUFDS_GTE2 O output, deliberately NOT the BUFHCE-buffered
+      -- gtrefclk below it: a GT's GTREFCLK0 input must come over the dedicated
+      -- clock route, not through fabric clock buffers.
+      gtrefclk_out      : out   std_logic
 
       );
 end sgmii_vc707;
@@ -547,6 +559,8 @@ begin
    sgmii1 : if simulation  generate
 
    end generate;
+
+   gtrefclk_out <= gtrefclk_buf_i;
 
    sgmii0 : if not simulation  generate
 

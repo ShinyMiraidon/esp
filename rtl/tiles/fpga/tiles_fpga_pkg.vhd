@@ -232,6 +232,16 @@ package tiles_fpga_pkg is
       noc4_output_port_tile   : in  dma_noc_flit_type;
       noc5_output_port_tile   : in  misc_noc_flit_type;
       noc6_output_port_tile   : in  dma_noc_flit_type;
+      -- I/O link; see the note on the entity in fpga_tile_io.vhd
+      iolink_data_oen    : out std_logic;
+      iolink_data_in     : in  std_logic_vector(CFG_IOLINK_BITS - 1 downto 0) := (others => '0');
+      iolink_data_out    : out std_logic_vector(CFG_IOLINK_BITS - 1 downto 0);
+      iolink_valid_in    : in  std_ulogic := '0';
+      iolink_valid_out   : out std_ulogic;
+      iolink_clk_in      : in  std_ulogic := '0';
+      iolink_clk_out     : out std_ulogic;
+      iolink_credit_in   : in  std_ulogic := '0';
+      iolink_credit_out  : out std_ulogic;
       mon_noc            : in  monitor_noc_vector(1 to 6);
       mon_dvfs           : out monitor_dvfs_type);
   end component fpga_tile_io;

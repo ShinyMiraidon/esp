@@ -45,6 +45,9 @@ endif
 ifeq ($(CONFIG_HAS_DVFS),y)
 XDC  += $(ESP_ROOT)/constraints/esp-common/esp-plls.xdc
 endif
+ifeq ($(CONFIG_IOLINK_EN),y)
+XDC  += $(ESP_ROOT)/constraints/$(BOARD)/$(BOARD)$(XDC_SUFFIX)-sfp-pins.xdc
+endif
 endif
 
 
@@ -565,15 +568,28 @@ vivado-update-emu: vivado vivado/syn_emu.tcl
 
 endif # ifneq ($(filter $(TECHLIB),$(FPGALIBS)),)
 
+# Bitstream to program. Defaults to whatever vivado-syn last produced, so the
+# usual flow is unchanged. Override it to program a saved bitstream, which is
+# what a multi-board setup needs -- two boards carrying the I/O link need two
+# builds (different EDCL addresses, opposite link roles), and each build
+# overwrites top.bit:
+#
+#   make fpga-program BITFILE=initiator.bit
+#
+# Resolved with abspath so it works whether given relative to the board
+# directory or as an absolute path; the recipe below runs inside vivado/.
+BITFILE ?= vivado/$(DESIGN).runs/impl_1/$(TOP).bit
+
 vivado-prog-fpga: vivado/program.tcl
-	@cd vivado; \
-	bit=$(DESIGN).runs/impl_1/$(TOP).bit; \
+	@bit=$(abspath $(BITFILE)); \
 	if test -r $$bit; then \
+		echo $(SPACES)"INFO programming $$bit"; \
+		cd vivado; \
 		vivado $(VIVADO_BATCH_OPT) -source program.tcl -tclargs $(FPGA_HOST) $(XIL_HW_SERVER_PORT) $(PART) $$bit; \
+		cd ../; \
 	else \
-		echo $(SPACES)"ERROR: bistream not found; please run target vivado-syn first"; \
-	fi; \
-	cd ../;
+		echo $(SPACES)"ERROR: bitstream $$bit not found; run target vivado-syn first, or set BITFILE"; \
+	fi;
 
 vivado-clean:
 	$(QUIET_CLEAN)$(RM) $(VIVADO_LOGS)
