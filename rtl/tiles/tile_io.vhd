@@ -326,11 +326,30 @@ architecture rtl of tile_io is
     7      => to_std_logic(CFG_SGMII * CFG_GRETH),  -- eth phy
     others => '0');
 
+  -- The I/O link role (IOLINK_IS_TARGET / IOLINK_IS_INITIATOR) and the
+  -- initiator window (IOLINK_WINDOW_HADDR, IOLINK_WINDOW_LOG2,
+  -- IOLINK_TARGET_BASE) are defined once in the tile package
+  -- (rtl/sockets/proxy/tile.vhd), because tile_cpu has to widen Ariane's CLINT
+  -- crossbar rule to match -- see the explanation there.
+  --
+  -- Slave index 5 is the first free one after bootrom/ahb2apb/clint/fb/DDR.
+  -- The window's hconfig is a generic on ahbslv2iolink, so it is declared here
+  -- the way fpga_proxy_top declares its own. That covers decoding INSIDE this
+  -- tile only; reaching it from the CPU is the tile_cpu change.
+  constant iolink_hindex  : integer := 5;
+  -- AHB mask derived from the window size, so the two cannot disagree.
+  constant iolink_hmask   : integer := (16#FFF# * 2 ** (IOLINK_WINDOW_LOG2 - 20)) mod 16#1000#;
+  constant iolink_hconfig : ahb_config_type := (
+    0      => ahb_device_reg (VENDOR_SLD, SLD_IO_LINK, 0, 0, 0),
+    4      => ahb_membar(IOLINK_WINDOW_HADDR, '0', '0', iolink_hmask),
+    others => zero32);
+
   constant this_local_ahb_en : std_logic_vector(0 to NAHBSLV - 1) := (
     0      => '1',                            -- bootrom
     1      => '1',                            -- ahb2apb
     2      => to_std_logic(GLOB_CPU_RISCV * GLOB_CPU_AXI),  -- risc-v clint
     3      => to_std_logic(CFG_SVGA_ENABLE),  -- frame buffer
+    5      => to_std_logic(IOLINK_IS_INITIATOR),  -- I/O link initiator window
     others => '0');
 
   constant this_remote_apb_slv_en : std_logic_vector(0 to NAPBSLV - 1) := remote_apb_slv_mask_misc;
@@ -583,7 +602,19 @@ begin
     noc_apbo(7) <= apb_none;
   end generate no_sgmii_gen;
 
-  iolink_en: if CFG_IOLINK_EN = 1 generate
+  -- The AHB decoder matches the window on its aligned base, so a misaligned
+  -- window would silently decode a different range. Fail the build instead.
+  assert IOLINK_WINDOW_HADDR mod 2 ** (IOLINK_WINDOW_LOG2 - 20) = 0
+    report "I/O link window base (IOLINK_WINDOW_HADDR) is not aligned to its size (IOLINK_WINDOW_LOG2)"
+    severity failure;
+  -- The translation below keeps the offset bits and replaces the rest, so a
+  -- misaligned target base would have its low bits silently dropped.
+  assert unsigned(IOLINK_TARGET_BASE(IOLINK_WINDOW_LOG2 - 1 downto 0)) = 0
+    report "I/O link target base (IOLINK_TARGET_BASE) is not aligned to the window size (IOLINK_WINDOW_LOG2)"
+    severity failure;
+
+  -- TARGET: the far side masters into this SoC.
+  iolink_target_gen: if IOLINK_IS_TARGET = 1 generate
     iolink2ahbm_i : iolink2ahbm
       generic map (
         hindex        => CFG_GRETH + CFG_DSU_ETH,
@@ -605,7 +636,55 @@ begin
         io_credit_out => iolink_credit_out,
         ahbmi         => ahbmi,
         ahbmo         => ahbmo(CFG_GRETH + CFG_DSU_ETH));
-  end generate iolink_en;
+  end generate iolink_target_gen;
+
+  -- INITIATOR: this SoC masters out over the link. CPU accesses to the window
+  -- above become link transactions against the far side's memory.
+  iolink_initiator_gen: if IOLINK_IS_INITIATOR = 1 generate
+    signal iolink_ahbsi : ahb_slv_in_type;
+  begin
+    -- Address translation into the far side's space. ahbctrl has already
+    -- decoded hsel from the ORIGINAL address, and the bridge uses haddr only to
+    -- forward it, so rewriting the copy it sees is sufficient: the offset
+    -- within the window is kept and the window base replaced by the target's.
+    iolink_translate : process (ahbsi) is
+    begin
+      iolink_ahbsi <= ahbsi;
+      iolink_ahbsi.haddr(31 downto IOLINK_WINDOW_LOG2) <=
+        IOLINK_TARGET_BASE(31 downto IOLINK_WINDOW_LOG2);
+    end process iolink_translate;
+
+    -- The initiator is an AHB SLAVE, so the master slot the target role uses
+    -- for iolink2ahbm is idle here -- but it must still exist and be driven.
+    -- esp_init and noc2ahbmst are numbered after it (CFG_IOLINK_EN + 1 and
+    -- CFG_IOLINK_EN), and ahbctrl's nahbm counts it, so removing the slot
+    -- would push esp_init out of the arbitrated range and the tile would never
+    -- run its self-configuration.
+    ahbmo(CFG_GRETH + CFG_DSU_ETH) <= ahbm_none;
+
+    ahbslv2iolink_i : ahbslv2iolink
+      generic map (
+        hindex        => iolink_hindex,
+        hconfig       => iolink_hconfig,
+        io_bitwidth   => CFG_IOLINK_BITS,
+        word_bitwidth => 32,
+        little_end    => 0,
+        credit_depth  => CFG_IOLINK_CREDITS)
+      port map (
+        clk           => tile_clk,
+        rstn          => rst,
+        io_clk_in     => iolink_clk_in,
+        io_clk_out    => iolink_clk_out,
+        io_data_oen   => iolink_data_oen,
+        io_data_in    => iolink_data_in,
+        io_data_out   => iolink_data_out,
+        io_valid_in   => iolink_valid_in,
+        io_valid_out  => iolink_valid_out,
+        io_credit_in  => iolink_credit_in,
+        io_credit_out => iolink_credit_out,
+        ahbsi         => iolink_ahbsi,
+        ahbso         => ahbso(iolink_hindex));
+  end generate iolink_initiator_gen;
 
   no_iolink_en: if CFG_IOLINK_EN = 0 generate
     iolink_data_out   <= (others => '0');

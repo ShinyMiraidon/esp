@@ -266,6 +266,9 @@ class SoC_Config():
         line = fp.readline()
         item = line.split()
         self.iolink_credits.set(int(item[2]))
+        line = fp.readline()
+        item = line.split()
+        self.iolink_role.set(int(item[2]))
         # Mem Link
         line = fp.readline()
         item = line.split()
@@ -406,6 +409,8 @@ class SoC_Config():
                  str(self.iolink_width.get()) + "\n")
         fp.write("CONFIG_IOLINK_CREDITS = " +
                  str(self.iolink_credits.get()) + "\n")
+        fp.write("CONFIG_IOLINK_ROLE = " +
+                 str(self.iolink_role.get()) + "\n")
         fp.write("CONFIG_MEM_LINK_WIDTH = " +
                  str(self.mem_link_width.get()) + "\n")
         if self.svga_en.get() == 1:
@@ -553,6 +558,11 @@ class SoC_Config():
         self.iolink_en = IntVar(master=tk_master)
         self.iolink_width = IntVar(master=tk_master)
         self.iolink_credits = IntVar(master=tk_master)
+        # 0 = target (far side masters into this SoC, via iolink2ahbm)
+        # 1 = initiator (this SoC masters out over the link, via ahbslv2iolink)
+        # 2 is reserved for both directions at once (not implemented yet); see
+        # IOLINK_IS_TARGET / IOLINK_IS_INITIATOR in rtl/sockets/proxy/tile.vhd.
+        self.iolink_role = IntVar(master=tk_master)
         self.mem_link_width = IntVar(master=tk_master)
         self.svga_en = IntVar(master=tk_master)
         # Debug Link

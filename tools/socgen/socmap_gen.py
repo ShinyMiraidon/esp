@@ -291,6 +291,7 @@ class soc_config:
         self.has_iolink = soc.iolink_en.get()
         self.iolink_width = soc.iolink_width.get()
         self.iolink_credits = soc.iolink_credits.get()
+        self.iolink_role = soc.iolink_role.get()
         self.has_sgmii = soc.HAS_SGMII
         self.has_jtag = soc.jtag_en.get()
         if self.coherence:
@@ -651,7 +652,19 @@ def print_constants(fp, soc, esp_config):
     # a power of 2: it sizes gray-code async FIFOs in iolink2ahbm and
     # ahbslv2iolink, whose CDC is only safe when the pointer wrap is 2^n.
     fp.write("  constant CFG_IOLINK_CREDITS : integer := " +
-             str(soc.iolink_credits.get()) + ";\n\n")
+             str(soc.iolink_credits.get()) + ";\n")
+    # Which end of the I/O link this SoC is.
+    #   0 target    - the far side masters into this SoC; tile_io builds
+    #                 iolink2ahbm, as an AHB master. This is the historical
+    #                 behaviour and the one the ASIC/FPGA-proxy pair uses.
+    #   1 initiator - this SoC masters out over the link; tile_io builds
+    #                 ahbslv2iolink, as an AHB slave, and CPU accesses to its
+    #                 window are forwarded to the far side.
+    #   2 reserved for both at once, which needs a channel tag in the PHY's
+    #     wire format so the two directions keep separate credit accounting.
+    # Two boards on one link must be opposite roles, or nothing masters.
+    fp.write("  constant CFG_IOLINK_ROLE : integer := " +
+             str(soc.iolink_role.get()) + ";\n\n")
 
     fp.write("  ------ Custom Memory Link to FPGA for DDR access\n")
     fp.write("  constant CFG_MEM_LINK_BITS : integer := " +

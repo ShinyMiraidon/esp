@@ -1251,4 +1251,78 @@ package tile is
       noc6_stop_out_tile     : out std_ulogic);
   end component noc_domain_socket;
 
+  -----------------------------------------------------------------------------
+  -- I/O link role and initiator window
+  --
+  -- CFG_IOLINK_ROLE selects which end of the I/O link this SoC is:
+  --   0 target    - tile_io builds iolink2ahbm; the far side masters in.
+  --   1 initiator - tile_io builds ahbslv2iolink; CPU accesses to the window
+  --                 below are forwarded over the link to the far SoC.
+  -- Exactly one of these is set; role 2 (both at once) is not implemented and
+  -- leaves both clear, which builds neither bridge rather than the wrong one.
+  --
+  -- The window is defined ONCE, here, because two tiles must agree on it:
+  --
+  --   tile_io   decodes it on the I/O tile's local AHB bus (slave index 5)
+  --             and rewrites the address into the far side's space.
+  --
+  --   tile_cpu  widens Ariane's CLINT crossbar rule to cover it. Ariane routes
+  --             every access by address in its own AXI crossbar before it
+  --             leaves the CPU tile, and that crossbar has exactly one address
+  --             region per port (NB_REGION = 1). Only the ROM and CLINT ports
+  --             reach the I/O tile's AHB bus (axislv2noc sends them there as
+  --             remote-AHB requests); DRAM goes to the memory tiles and APB is
+  --             converted to APB inside the CPU tile, so it can never reach an
+  --             AHB slave. Without the widened rule the window matches no rule
+  --             and the crossbar returns a decode error to the CPU.
+  --
+  -- The window sits in the unused gap between CLINT (0x0200_0000-0x020B_FFFF)
+  -- and SLM (0x0400_0000), so widening CLINT's rule up to its end overlaps
+  -- nothing. CLINTLength feeds ONLY the crossbar rule -- not Ariane's cached,
+  -- execute or non-idempotent regions -- so the window stays uncached,
+  -- non-executable and non-idempotent, as an I/O window should be. The CLINT
+  -- device itself, and its device-tree size, are unchanged.
+  --
+  -- Consequence of the wider rule: accesses to the unmapped addresses between
+  -- the end of CLINT and the start of the window now travel to the I/O tile
+  -- and fail there, instead of failing at Ariane's crossbar.
+  -----------------------------------------------------------------------------
+  constant IOLINK_IS_TARGET    : integer :=
+    CFG_IOLINK_EN * boolean'pos(CFG_IOLINK_ROLE = 0);
+  constant IOLINK_IS_INITIATOR : integer :=
+    CFG_IOLINK_EN * boolean'pos(CFG_IOLINK_ROLE = 1);
+
+  -- Window: base as AHB haddr (address bits 31:20) and size as log2(bytes).
+  -- 0x030 / 24 = 0x0300_0000-0x03FF_FFFF, 16 MB. The base must be aligned to
+  -- the size.
+  constant IOLINK_WINDOW_HADDR : integer := 16#030#;
+  constant IOLINK_WINDOW_LOG2  : integer := 24;
+
+  -- Where the window lands on the far side: window base + offset maps to
+  -- IOLINK_TARGET_BASE + offset, i.e. the far SoC's DRAM. Must be aligned to
+  -- the window size (only address bits 31:IOLINK_WINDOW_LOG2 are replaced).
+  --
+  -- 0xA000_0000 rather than the start of DRAM, for two reasons:
+  --  * It keeps the far side's loaded program out of reach. Baremetal images
+  --    link at 0x8000_0000 with their stack just past _end, so a window at the
+  --    base of DRAM would let any initiator bug overwrite the target's code.
+  --  * With ESP caches off (CFG_L2_ENABLE = 0, every FPGA defconfig), Ariane
+  --    caches only the first 512 MB of DRAM (ariane_cacheable_len in
+  --    tile_cpu). DRAM is 1 GB (ddr_hmask 0xC00), so 0xA000_0000 up is
+  --    uncached for the target's own CPU, and it sees link writes without
+  --    any flush. With L2 enabled the cached length doubles and this no
+  --    longer holds.
+  -- Linux reserves this range for DMA pools (greth_reserved at 0xA000_0000,
+  -- then accelerator buffers), so revisit this before a Linux target.
+  constant IOLINK_TARGET_BASE  : std_logic_vector(31 downto 0) := X"A0000000";
+
+  -- Ariane's CLINT crossbar rule. Stock in every build except an I/O link
+  -- initiator, where it is extended to end exactly at the window's last byte.
+  constant ARIANE_CLINT_BASE      : integer := 16#02000000#;
+  constant ARIANE_CLINT_STOCK_LEN : integer := 16#000C0000#;
+  constant ARIANE_CLINT_LEN       : integer :=
+    ARIANE_CLINT_STOCK_LEN + IOLINK_IS_INITIATOR *
+    (IOLINK_WINDOW_HADDR * 2 ** 20 + 2 ** IOLINK_WINDOW_LOG2
+     - ARIANE_CLINT_BASE - ARIANE_CLINT_STOCK_LEN);
+
 end tile;

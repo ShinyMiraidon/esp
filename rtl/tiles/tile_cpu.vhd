@@ -657,6 +657,18 @@ begin
   -- Ariane
   ariane_cpu_gen: if GLOB_CPU_ARCH = ariane generate
 
+    -- The CLINT rule may be widened to cover the I/O link window (see
+    -- ARIANE_CLINT_LEN in rtl/sockets/proxy/tile.vhd). Check at elaboration
+    -- that the window neither overlaps the CLINT nor runs into SLM
+    -- (SLMBase below), so moving it to a bad place fails the build instead of
+    -- misrouting CLINT or SLM traffic to the I/O tile.
+    assert IOLINK_WINDOW_HADDR * 2 ** 20 >= ARIANE_CLINT_BASE + ARIANE_CLINT_STOCK_LEN
+      report "I/O link window overlaps the CLINT in Ariane's crossbar; move IOLINK_WINDOW_HADDR"
+      severity failure;
+    assert ARIANE_CLINT_BASE + ARIANE_CLINT_LEN <= 16#04000000#
+      report "I/O link window runs into SLM in Ariane's crossbar; move IOLINK_WINDOW_HADDR"
+      severity failure;
+
     ariane_axi_wrap_1: ariane_axi_wrap
       generic map (
         NMST             => 2,
@@ -665,8 +677,11 @@ begin
         ROMLength        => X"0000_0000_0001_0000",
         APBBase          => X"0000_0000" & conv_std_logic_vector(CFG_APBADDR, 12) & X"0_0000",
         APBLength        => X"0000_0000_1000_0000",
-        CLINTBase        => X"0000_0000_0200_0000",
-        CLINTLength      => X"0000_0000_000C_0000",
+        -- In I/O link initiator builds the CLINT rule is widened to also cover
+        -- the link window, which is the only way Ariane can reach it: see
+        -- ARIANE_CLINT_LEN in rtl/sockets/proxy/tile.vhd. Stock otherwise.
+        CLINTBase        => conv_std_logic_vector(ARIANE_CLINT_BASE, 64),
+        CLINTLength      => conv_std_logic_vector(ARIANE_CLINT_LEN, 64),
         SLMBase          => X"0000_0000_0400_0000",
         SLMLength        => X"0000_0000_0400_0000",  -- Reserving up to 64MB; devtree can set less
         SLMDDRBase       => X"0000_0000_C000_0000",

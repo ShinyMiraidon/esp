@@ -298,9 +298,19 @@ class PeripheralsConfigFrame:
                 dropdown_hover_color="#e8e8e8",
                 command=main_frame.update_noc_config)
             self.custom_io_menu.pack()
+
         else:
             self.custom_io_checkbox.configure(state="disabled")
             self.custom_io_label.configure(text_color="grey")
+
+        # Which end of the I/O link this SoC is. Two boards sharing a link must
+        # be opposite roles: the initiator masters out over the link, the target
+        # is mastered into. Get this wrong on both and nothing drives the link.
+        # A checkbox suits the two roles we build today; it will need to become
+        # a three-way selector when the bidirectional role lands.
+        self.iolink_role_label, self.iolink_role_checkbox = StyledComponents.CheckBoxWithLabel(
+            self.peripherals_frame, self.soc.iolink_role, "IO Link initiator", "normal", 5, 0,
+            command=main_frame.update_noc_config)
 
         # FPGA Memory Link:
         mem_link_width_choices = ["32", "64", "128", "256", "512"]
