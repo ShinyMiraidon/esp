@@ -6,18 +6,31 @@
 
 #include <stdint.h>
 
-/* Base of the test window in main memory.
+/* Base of the test region in the TARGET's main memory.
  *
- * DDR_HADDR for the RISC-V cores is 0x800, so DRAM starts at 0x80000000;
- * LEON3 maps it at 0x40000000 instead. 0x88000000 / 0x48000000 is 128 MiB in,
- * which clears the loaded payload comfortably. Adjust if your DRAM window
- * differs or the payload grows.
+ * On RISC-V this is where the initiator's window lands: the I/O link maps
+ * window base + offset onto IOLINK_TARGET_BASE + offset in the far SoC, and
+ * the mailbox sits at offset 0. Keep IOLINK_TARGET_BASE equal to the constant
+ * of the same name in rtl/sockets/proxy/tile.vhd, which explains the choice:
+ * 512 MiB into DRAM, clear of the loaded payload at 0x80000000, and beyond
+ * the range Ariane caches when ESP caches are off.
+ *
+ * LEON3 maps DRAM at 0x40000000 and is not an I/O link endpoint in this
+ * scheme; its base is kept only so the program still builds there.
  */
 #ifdef __riscv
-    #define IOLINK_TEST_BASE 0x88000000
+    #define IOLINK_TARGET_BASE 0xA0000000u
+    #define IOLINK_TEST_BASE   IOLINK_TARGET_BASE
 #else
     #define IOLINK_TEST_BASE 0x48000000
 #endif
+
+/* The initiator's side of the same mapping: IOLINK_WINDOW_HADDR and
+ * IOLINK_WINDOW_LOG2 in rtl/sockets/proxy/tile.vhd (0x030 << 20, 2^24 bytes).
+ * Every access in this range on an initiator SoC travels over the link.
+ */
+#define IOLINK_WINDOW_BASE 0x03000000u
+#define IOLINK_WINDOW_SIZE 0x01000000u
 
 /* Mailbox lives in the first cache lines; data follows at +4 KiB so the two
  * never share a line. The far side only needs these offsets, nothing else.
@@ -62,9 +75,86 @@
  */
 /* #define IOLINK_PARANOID */
 
-/* Bounded wait so a dead link reports instead of hanging forever. Units are
- * poll iterations, not cycles; tune on hardware.
+/* Word 6: CPU -> far side. Set to IOLINK_MAGIC_RESULT once STATUS holds the
+ * final error count, so the far side can tell "0 errors" from "not finished".
  */
-#define IOLINK_POLL_LIMIT 200000000u
+#define IOLINK_MBOX_RESULT 6
+#define IOLINK_MAGIC_RESULT 0xC0DEC0DEu
+
+/* Word 7: CPU -> far side. Where the target program is, so the far side -- or
+ * anyone with esplink -- can tell "not started" from "gave up waiting" without
+ * the target's UART. Magic values, so stale DRAM is not mistaken for a state.
+ */
+#define IOLINK_MBOX_TSTATE    7
+#define IOLINK_TSTATE_SETUP   0x7A570001u /* writing patterns, READY not set  */
+#define IOLINK_TSTATE_WAITING 0x7A570002u /* READY set, waiting for DONE      */
+#define IOLINK_TSTATE_TIMEOUT 0x7A570003u /* gave up waiting; READY cleared   */
+#define IOLINK_TSTATE_FINISHED 0x7A570004u /* verified; STATUS and RESULT set */
+
+static inline const char *iolink_tstate_name(uint32_t s)
+{
+    switch (s) {
+        case IOLINK_TSTATE_SETUP: return "setting up";
+        case IOLINK_TSTATE_WAITING: return "waiting for DONE";
+        case IOLINK_TSTATE_TIMEOUT: return "timed out waiting for DONE";
+        case IOLINK_TSTATE_FINISHED: return "finished";
+        default: return "unknown -- target program not running?";
+    }
+}
+
+/* The test's footprint past IOLINK_TEST_BASE, largest region size. */
+#define IOLINK_TEST_BYTES (IOLINK_DATA_OFFSET + IOLINK_NREGIONS * IOLINK_REGION_WORDS_NOCOH * 4)
+
+/* Bounded waits, so a dead link reports instead of hanging forever. Measured
+ * in CPU cycles rather than poll iterations, because the cost of one poll
+ * depends on the path (an uncached read across the NoC, a round trip over the
+ * link, a fence). 10 minutes at the VC707's 50 MHz CPU clock: loading the
+ * second board by hand, switching UART consoles on the way, easily took longer
+ * than the 120 s first used here, and the target then gave up before the
+ * initiator's first read.
+ */
+#define IOLINK_CPU_HZ         50000000ull
+#define IOLINK_TIMEOUT_S      600ull
+#define IOLINK_TIMEOUT_CYCLES (IOLINK_TIMEOUT_S * IOLINK_CPU_HZ)
+
+#ifdef __riscv
+static inline uint64_t iolink_cycles(void)
+{
+    uint64_t c;
+    __asm__ volatile("csrr %0, mcycle" : "=r"(c));
+    return c;
+}
+#else
+/* No cycle counter used on LEON3: count calls instead, so the limit becomes a
+ * poll count there.
+ */
+static inline uint64_t iolink_cycles(void)
+{
+    static uint64_t n;
+    return n++;
+}
+#endif
+
+/* Deterministic and trivially reproducible on the far side, in C or a script.
+ * Shared by both halves of the test (iolink_rw_test, iolink_rw_initiator), so
+ * they cannot disagree about what a region holds.
+ */
+static inline uint32_t pattern(int region, uint32_t i)
+{
+    switch (region) {
+        case 0: return i; /* counter: address aliasing            */
+        case 1: return 1u << (i & 31); /* walking ones: stuck data bits        */
+        default: return i * 2654435761u; /* Knuth hash: burst/ordering errors    */
+    }
+}
+
+static inline const char *region_name(int region)
+{
+    switch (region) {
+        case 0: return "counter";
+        case 1: return "walking-ones";
+        default: return "hash";
+    }
+}
 
 #endif /* __IOLINK_RW_TEST_H__ */
