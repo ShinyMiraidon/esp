@@ -103,6 +103,39 @@ void esp_flush(int coherence)
 
     if (coherence < ACC_COH_RECALL) {
 
+#ifdef __riscv
+        /*
+         * Flush and invalidate Ariane's L1 data cache.
+         *
+         * This is the RISC-V counterpart of the ASI_LEON_DFLUSH below, and it
+         * is deliberately OUTSIDE the "nl2 > 0" block. Where ESP builds an L2,
+         * l2_wrapper drives Ariane's flush_l1 input directly, so the L1 flush
+         * is a hardware handshake -- that is what the "waits for L1 to flush
+         * first" comment below refers to. But l2_wrapper only exists inside
+         * "if CFG_L2_ENABLE /= 0 generate" in tile_cpu.vhd, so on a board built
+         * without caches -- which is every FPGA defconfig, including VC707 --
+         * flush_l1 has no driver at all and nl2 is 0, so nothing here would
+         * run. An external master writing DRAM (the far end of the I/O link)
+         * would then stay invisible to the core.
+         *
+         * A plain FENCE is what does it. Architecturally RISC-V FENCE only
+         * orders memory accesses, but CVA6 implements it as a full D-cache
+         * flush: controller.sv raises flush_dcache on both FENCE and FENCE.I
+         * and halts the core until it acknowledges. ESP builds Ariane with the
+         * WRITE-THROUGH data cache (WT_DCACHE is defined in every ESP flow),
+         * so that request reaches wt_dcache_missunit, which clears the valid
+         * bit of every line, and wt_dcache only acknowledges once its write
+         * buffer has drained. So it is a drain of pending stores AND a full
+         * invalidate, which is what a subsequent read needs. Being
+         * write-through, there are no dirty lines to write back. This core
+         * implements no Zicbom, so there is no architectural alternative.
+         *
+         * It runs before the L2 command below so that stores still in the
+         * write buffer have reached L2/DRAM before the L2 flush is issued.
+         */
+        __asm__ __volatile__("fence" : : : "memory");
+#endif
+
         if (nl2 > 0) {
             /* Set L2 flush (waits for L1 to flush first) */
             for (i = 0; i < nl2; i++) {
