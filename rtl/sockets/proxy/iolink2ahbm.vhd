@@ -351,17 +351,21 @@ begin  -- architecture rtl
 
   credit_received <= credit_in nor credit_in_empty;
 
-  process (io_clk_out_int) is
+  -- Asynchronous reset, like the other io_clk registers below. With a
+  -- synchronous one this counter is never reset when io_clk is stopped during
+  -- reset -- as it is with the Aurora PHY, where user_clk does not run while
+  -- the SoC holds the transceiver in reset -- and it then starts from its
+  -- power-up value of 0. With no credits the bridge accepts requests but can
+  -- never send a read reply, so the far side's first read hangs forever.
+  process (io_clk_out_int, rstn) is
   begin  -- process
-    if io_clk_out_int'event and io_clk_out_int = '1' then     -- rising clock edge
-      if rstn = '0' then
-        credits <= QUEUE_DEPTH;
-      else
-        if io_snd_rdreq = '1' and credit_received = '0' and credits /= 0 then
-          credits <= credits - 1;
-        elsif io_snd_rdreq = '0' and credit_received = '1' and credits /= QUEUE_DEPTH then
-          credits <= credits + 1;
-        end if;
+    if rstn = '0' then                  -- asynchronous reset (active low)
+      credits <= QUEUE_DEPTH;
+    elsif io_clk_out_int'event and io_clk_out_int = '1' then  -- rising clock edge
+      if io_snd_rdreq = '1' and credit_received = '0' and credits /= 0 then
+        credits <= credits - 1;
+      elsif io_snd_rdreq = '0' and credit_received = '1' and credits /= QUEUE_DEPTH then
+        credits <= credits + 1;
       end if;
     end if;
   end process;
