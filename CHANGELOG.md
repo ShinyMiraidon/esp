@@ -9,6 +9,81 @@ adheres to [Calendar Versioning](https://calver.org/) with format
 
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Architecture**
+  - ESP I/O link carried over an optical SFP+ link between two VC707 boards,
+    using Aurora 64B/66B (`iolink_phy_aurora`,
+    `constraints/xilinx-vc707-xc7vx485t/aurora.tcl`). Enabled with
+    `CONFIG_IOLINK_EN`
+  - `CONFIG_IOLINK_CREDITS`: configurable I/O link credit budget (default 8,
+    must be a power of 2)
+  - `CONFIG_IOLINK_ROLE`: selects which end of the I/O link an SoC is. Target
+    (default) builds `iolink2ahbm`; initiator builds `ahbslv2iolink` and exposes
+    a 16 MB window at `0x0300_0000` mapped to the far SoC's DRAM at
+    `0xA000_0000`, which Ariane does not cache when ESP caches are off. Also
+    available as a GUI option
+  - VC707 SFP+ module control (`TX_DISABLE` driven, `LOS` read), with link
+    status and sticky error bits on the GPIO LEDs
+  - Loopback testbench for the I/O link over Aurora (`rtl/sim/tb/iolink_aurora`)
+
+- **Software**
+  - Two-board I/O link read/write test: `iolink_rw_test` runs on the target
+    and `iolink_rw_initiator` on the initiator. They share a mailbox protocol,
+    patterns and timeouts, the initiator checks the read path and reports
+    throughput, and the target checks the write path
+
+- **Infrastructure**
+  - `make fpga-program BITFILE=<file>` programs a saved bitstream
+
+### Changed
+
+- **Architecture**
+  - In I/O link initiator builds only, Ariane's AXI crossbar CLINT rule is
+    widened from `0x0200_0000-0x020B_FFFF` to `0x0200_0000-0x03FF_FFFF` so the
+    CPU can reach the initiator window. The crossbar has one address region per
+    port, and only its ROM and CLINT ports reach the I/O tile's AHB bus. The
+    CLINT device, its device-tree entry and every other build are unchanged;
+    the rationale is in `rtl/sockets/proxy/tile.vhd`
+  - The I/O link is brought out through `fpga_tile_io` and `esp`. The new
+    ports have defaults, so boards that do not use the link need no changes
+
+### Fixed
+
+- **Architecture**
+  - `ahbslv2iolink`: write data is sampled in the AHB data phase. The bridge
+    used a copy latched in the address phase, which only works with masters
+    that drive `hwdata` early. With a compliant one such as `noc2ahbmst`, which
+    carries CPU accesses, 63 of 64 writes arrived as zero in simulation
+  - `ahbslv2iolink`: back-to-back reads no longer lose the second request.
+    After the last word, the read state spent a cycle with `hready` high but
+    not accepting an address, so every second read returned the previous
+    read's data
+  - `noc2aximst`: on 64-bit SoCs, a 32-bit remote-AHB read (EDCL, JTAG, an
+    I/O link target) of a word at offset 0 mod 8 returned the word at
+    offset 4. The proxy's write path puts that word in the upper half of the
+    AXI beat, but its read path always returned the lower half. Writes were
+    unaffected, so loading programs over EDCL worked, but EDCL dumps of DRAM
+    and I/O link reads were wrong
+  - `iolink2ahbm`: the send-credit counter now resets asynchronously. Its
+    synchronous reset never took effect when the link clock is stopped during
+    reset, as Aurora's `user_clk` is, so the counter started at 0 and the
+    target could never send a read reply: the far side's first read hung
+  - `ahbslv2iolink`: the receive beat counter is clocked by the link clock
+    (`io_clk_in`), not the local clock. With a link clock faster than the
+    local one, as with Aurora, beats were missed and words were assembled from
+    the wrong halves
+
+- **Software**
+  - `esp_flush()` now flushes and invalidates Ariane's L1 data cache on RISC-V,
+    including on SoCs built without ESP caches
+
+- **Infrastructure**
+  - Realigned the `epochs0-gf12` defconfig with the socgen parser
+  - socgen no longer requires the unused `Pmw` package
+
 ## [2026.1.0]
 
 ### Added
