@@ -294,6 +294,41 @@ module noc2aximst #(
                         )
                         coh_rd_data_flit[ARCH_BITS*i+:ARCH_BITS] = fix_endian(R_DATA, little_end);
 
+                        // 32-bit remote-AHB reads on a 64-bit bus: return the
+                        // addressed word, not always the lower half.
+                        //
+                        // AHB_RD is what the I/O tile's ahbslv2noc sends for its
+                        // AHB masters other than Ethernet DMA: EDCL, JTAG and an
+                        // I/O link target (iolink2ahbm). Each is a single 32-bit
+                        // read (ar_size = XSIZE_WORD), but the beat returned here
+                        // is 64 bits wide. The reply crosses the 32-bit misc NoC
+                        // through large_to_narrow_flit, which keeps only bits 31:0
+                        // of a data flit, and ahbslv2noc returns those as hrdata.
+                        //
+                        // This proxy's own write path decides which half a word
+                        // lives in: WRITE_DATA_EDCL (and the AHB_WR strobes set in
+                        // RECEIVE_ADDRESS) put the word for addr[2] == 0 in
+                        // [63:32] and the word for addr[2] == 1 in [31:0]. The
+                        // read path forwarded R_DATA unchanged, so a read at
+                        // addr[2] == 0 returned the word at addr + 4. Writes and
+                        // reads through this proxy disagreed about half of
+                        // memory.
+                        //
+                        // Seen on a VC707 (Ariane, no LLC) as EDCL reads of DRAM
+                        // returning every doubleword's upper word twice, and as an
+                        // I/O link target reading 0 for a mailbox word the CPU had
+                        // set. Loading programs over EDCL only writes, and
+                        // Ethernet uses the DMA path, which is why it went
+                        // unnoticed.
+                        //
+                        // Move the addressed word into bits 31:0, taking it from
+                        // the half WRITE_DATA_EDCL writes it to. AXIDW equals
+                        // ARCH_BITS, so this is R_DATA[63:32]; the condition is
+                        // constant-false on 32-bit builds.
+                        if (ARCH_BITS == 64 && cs.msg == AHB_RD && cs.ar_size == XSIZE_WORD &&
+                            cs.ar_addr[2] == 1'b0)
+                            coh_rd_data_flit[31:0] = R_DATA[AXIDW-1-:32];
+
                         if (R_LAST == 1'b1) begin
                             if (cs.count == 0) begin
                                 coherence_rsp_snd_data_in = {PREAMBLE_TAIL, coh_rd_data_flit};
