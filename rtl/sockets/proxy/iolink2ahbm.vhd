@@ -138,6 +138,21 @@ architecture rtl of iolink2ahbm is
   attribute ASYNC_REG of receiving : signal is "TRUE";
   -- attribute ASYNC_REG of sending : signal is "TRUE";
 
+  -- rstn released on the link clocks. rstn belongs to the SoC's reset domain,
+  -- which is unrelated to the link clock (over Aurora, user_clk): releasing
+  -- link-clock registers on it directly lets them leave reset on different
+  -- edges, and the path cannot be timed. These assert asynchronously -- which
+  -- also works while the link clock is stopped, as user_clk is during reset --
+  -- and release two link-clock edges after rstn. io_clk_out_int is io_clk_in
+  -- here, but is clk in the commented FPGA-proxy alternative, so each link
+  -- clock gets its own.
+  signal io_in_rstn_meta, io_in_rstn   : std_ulogic;
+  signal io_out_rstn_meta, io_out_rstn : std_ulogic;
+  attribute ASYNC_REG of io_in_rstn_meta  : signal is "TRUE";
+  attribute ASYNC_REG of io_in_rstn       : signal is "TRUE";
+  attribute ASYNC_REG of io_out_rstn_meta : signal is "TRUE";
+  attribute ASYNC_REG of io_out_rstn      : signal is "TRUE";
+
   type iolink2ahbm_state_t is (receive_address, receive_length, bus_req, snd_bus_req,
                                receive_data, send_data, wait_send_data);
 
@@ -276,6 +291,28 @@ begin  -- architecture rtl
   -- io_clk_out_int <= clk;
 
   io_valid_out <= io_valid_out_int;
+
+  io_in_rst_sync : process (io_clk_in, rstn) is
+  begin
+    if rstn = '0' then
+      io_in_rstn_meta <= '0';
+      io_in_rstn      <= '0';
+    elsif rising_edge(io_clk_in) then
+      io_in_rstn_meta <= '1';
+      io_in_rstn      <= io_in_rstn_meta;
+    end if;
+  end process io_in_rst_sync;
+
+  io_out_rst_sync : process (io_clk_out_int, rstn) is
+  begin
+    if rstn = '0' then
+      io_out_rstn_meta <= '0';
+      io_out_rstn      <= '0';
+    elsif rising_edge(io_clk_out_int) then
+      io_out_rstn_meta <= '1';
+      io_out_rstn      <= io_out_rstn_meta;
+    end if;
+  end process io_out_rst_sync;
   
   -----------------------------------------------------------------------------
   -- Delay FSM state change
@@ -323,7 +360,7 @@ begin  -- architecture rtl
       we_i       => io_rcv_rdreq,
       d_i        => "0",
       wr_full_o  => open,
-      rst_rd_n_i    => rstn,
+      rst_rd_n_i    => io_out_rstn,
       clk_rd_i   => io_clk_out_int,
       rd_i       => '1',
       q_o(0)     => credit_out,
@@ -338,12 +375,12 @@ begin  -- architecture rtl
       g_data_width => 1,
       g_size       => 2 * QUEUE_DEPTH)
     port map (
-      rst_wr_n_i    => rstn,
+      rst_wr_n_i    => io_in_rstn,
       clk_wr_i   => io_clk_in,
       we_i       => io_credit_in,
       d_i        => "0",
       wr_full_o  => open,
-      rst_rd_n_i    => rstn,
+      rst_rd_n_i    => io_out_rstn,
       clk_rd_i   => io_clk_out_int,
       rd_i       => '1',
       q_o(0)     => credit_in,
@@ -357,9 +394,9 @@ begin  -- architecture rtl
   -- the SoC holds the transceiver in reset -- and it then starts from its
   -- power-up value of 0. With no credits the bridge accepts requests but can
   -- never send a read reply, so the far side's first read hangs forever.
-  process (io_clk_out_int, rstn) is
+  process (io_clk_out_int, io_out_rstn) is
   begin  -- process
-    if rstn = '0' then                  -- asynchronous reset (active low)
+    if io_out_rstn = '0' then                  -- asynchronous reset (active low)
       credits <= QUEUE_DEPTH;
     elsif io_clk_out_int'event and io_clk_out_int = '1' then  -- rising clock edge
       if io_snd_rdreq = '1' and credit_received = '0' and credits /= 0 then
@@ -377,7 +414,7 @@ begin  -- architecture rtl
       g_data_width => word_bitwidth,
       g_size       => 2 * QUEUE_DEPTH)
     port map (
-      rst_wr_n_i    => rstn,
+      rst_wr_n_i    => io_in_rstn,
       clk_wr_i   => io_clk_in,
       we_i       => io_rcv_wrreq,
       d_i        => io_rcv_data_in,
@@ -401,7 +438,7 @@ begin  -- architecture rtl
       we_i       => io_snd_wrreq_int,
       d_i        => io_snd_data_in_int,
       wr_full_o  => io_snd_full_int,
-      rst_rd_n_i    => rstn,
+      rst_rd_n_i    => io_out_rstn,
       clk_rd_i   => io_clk_out_int,
       rd_i       => io_snd_rdreq,
       q_o        => io_snd_data_out,
@@ -441,9 +478,9 @@ begin  -- architecture rtl
     end if;
   end process state_update;
 
-  rcv_state_update : process (io_clk_in, rstn) is
+  rcv_state_update : process (io_clk_in, io_in_rstn) is
   begin  -- process state_update
-    if rstn = '0' then                  -- asynchronous reset (active low)
+    if io_in_rstn = '0' then                  -- asynchronous reset (active low)
       io_rcv_reg <= IO_RCV_REG_DEFAULT;
       oen_reg    <= OEN_REG_DEFAULT;
     elsif io_clk_in'event and io_clk_in = '1' then  -- rising clock edge
@@ -452,9 +489,9 @@ begin  -- architecture rtl
     end if;
   end process rcv_state_update;
 
-  snd_state_update : process (io_clk_out_int, rstn) is
+  snd_state_update : process (io_clk_out_int, io_out_rstn) is
   begin  -- process state_update
-    if rstn = '0' then                  -- asynchronous reset (active low)
+    if io_out_rstn = '0' then                  -- asynchronous reset (active low)
       io_snd_reg <= IO_SND_REG_DEFAULT;
     elsif io_clk_out_int'event and io_clk_out_int = '1' then  -- rising clock edge
       io_snd_reg <= io_snd_reg_next;
@@ -577,7 +614,7 @@ begin  -- architecture rtl
       g_data_width => 1,
       g_size       => 2)
     port map (
-      rst_wr_n_i    => rstn,
+      rst_wr_n_i    => io_in_rstn,
       clk_wr_i   => io_clk_in,
       we_i       => '1',
       d_i(0)     => oen_fsm_idle,

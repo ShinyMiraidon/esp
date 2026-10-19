@@ -166,6 +166,14 @@ architecture rtl of iolink_phy_aurora is
   signal overflow_wr                : std_ulogic := '0';
   signal overflow_meta, overflow_q  : std_ulogic := '0';
 
+  -- Two-flop synchronisers. ASYNC_REG keeps each pair in one slice and out of
+  -- retiming, which is what gives them their metastability margin; the
+  -- crossings themselves are bounded in the board's -iolink-cdc.xdc.
+  attribute ASYNC_REG : string;
+  attribute ASYNC_REG of wr_rstn_meta, wr_rstn     : signal is "TRUE";
+  attribute ASYNC_REG of ready_meta, ready_wr      : signal is "TRUE";
+  attribute ASYNC_REG of overflow_meta, overflow_q : signal is "TRUE";
+
 begin
 
   -- The bridge's RECEIVE side is clocked by the Aurora user clock. Its

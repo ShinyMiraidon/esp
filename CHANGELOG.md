@@ -61,6 +61,11 @@ adheres to [Calendar Versioning](https://calver.org/) with format
     After the last word, the read state spent a cycle with `hready` high but
     not accepting an address, so every second read returned the previous
     read's data
+  - I/O link timing: the bridges' link-clock logic now leaves reset through a
+    reset synchroniser instead of releasing on the SoC reset directly, and the
+    crossings between Aurora's `user_clk` and the SoC clocks are constrained
+    (`xilinx-vc707-xc7vx485t-iolink-cdc.xdc`). Previously about 400 such paths
+    failed timing, timed as if the clocks were related
   - `noc2aximst`: on 64-bit SoCs, a 32-bit remote-AHB read (EDCL, JTAG, an
     I/O link target) of a word at offset 0 mod 8 returned the word at
     offset 4. The proxy's write path puts that word in the upper half of the

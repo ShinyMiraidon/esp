@@ -47,6 +47,7 @@ XDC  += $(ESP_ROOT)/constraints/esp-common/esp-plls.xdc
 endif
 ifeq ($(CONFIG_IOLINK_EN),y)
 XDC  += $(ESP_ROOT)/constraints/$(BOARD)/$(BOARD)$(XDC_SUFFIX)-sfp-pins.xdc
+XDC  += $(ESP_ROOT)/constraints/$(BOARD)/$(BOARD)$(XDC_SUFFIX)-iolink-cdc.xdc
 endif
 endif
 

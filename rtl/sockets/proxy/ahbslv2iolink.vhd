@@ -156,6 +156,17 @@ architecture rtl of ahbslv2iolink is
   attribute ASYNC_REG of receiving : signal is "TRUE";
   -- attribute ASYNC_REG of sending : signal is "TRUE";
 
+  -- rstn released on io_clk_in, the link clock this bridge receives on. rstn
+  -- belongs to the SoC's reset domain, which is unrelated to the link clock
+  -- (over Aurora, user_clk): releasing receive-side registers on it directly
+  -- lets them leave reset on different edges, and the path cannot be timed.
+  -- This asserts asynchronously -- which also works while the link clock is
+  -- stopped, as user_clk is during reset -- and releases two io_clk_in edges
+  -- after rstn. The transmit side runs on clk and keeps rstn.
+  signal io_in_rstn_meta, io_in_rstn : std_ulogic;
+  attribute ASYNC_REG of io_in_rstn_meta : signal is "TRUE";
+  attribute ASYNC_REG of io_in_rstn      : signal is "TRUE";
+
   -------------------------------------------------------------------------------
   -- FSM: Output enable
   -------------------------------------------------------------------------------
@@ -289,6 +300,17 @@ architecture rtl of ahbslv2iolink is
 begin
   
   rst <= not rstn;
+
+  io_in_rst_sync : process (io_clk_in, rstn) is
+  begin
+    if rstn = '0' then
+      io_in_rstn_meta <= '0';
+      io_in_rstn      <= '0';
+    elsif rising_edge(io_clk_in) then
+      io_in_rstn_meta <= '1';
+      io_in_rstn      <= io_in_rstn_meta;
+    end if;
+  end process io_in_rst_sync;
   io_data_oen <= sending.sync_clk_io or not receiving.sync_clk_io;
 
   -----------------------------------------------------------------------------
@@ -380,7 +402,7 @@ begin
       g_data_width => 1,
       g_size       => 2)
     port map (
-      rst_wr_n_i    => rstn,
+      rst_wr_n_i    => io_in_rstn,
       clk_wr_i   => io_clk_in,
       we_i       => '1',
       d_i(0)     => oen_fsm_idle,
@@ -414,7 +436,7 @@ begin
       g_data_width => word_bitwidth,
       g_size       => QUEUE_DEPTH)
     port map (
-      rst_wr_n_i    => rstn,
+      rst_wr_n_i    => io_in_rstn,
       clk_wr_i   => io_clk_in,
       we_i       => io_rcv_wrreq_in, 
       d_i        => io_rcv_data_in,
@@ -462,7 +484,7 @@ begin
       g_data_width => 1,
       g_size       => 2 * QUEUE_DEPTH)
     port map (
-      rst_wr_n_i    => rstn,
+      rst_wr_n_i    => io_in_rstn,
       clk_wr_i   => io_clk_in,
       we_i       => io_credit_in,
       d_i        => "0",
@@ -751,9 +773,9 @@ begin
   -- and every later word is built from the wrong halves. On the parallel
   -- cable io_clk_in is this bridge's own clock echoed back by the far side,
   -- the same frequency as clk, which is why this never showed there.
-  rcv_from_chip_state_update : process (io_clk_in, rstn)
+  rcv_from_chip_state_update : process (io_clk_in, io_in_rstn)
   begin
-    if(rstn = '0') then
+    if (io_in_rstn = '0') then
       io_rcv_reg <= IO_RCV_REG_DEFAULT;
     elsif io_clk_in'event and io_clk_in = '1' then
       io_rcv_reg <= io_rcv_reg_next;
