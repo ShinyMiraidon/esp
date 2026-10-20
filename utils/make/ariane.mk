@@ -8,6 +8,8 @@ RISCV_TESTS = $(SOFT)/riscv-tests
 RISCV_PK = $(SOFT)/riscv-pk
 OPENSBI = $(SOFT)/opensbi
 
+LINUX_HOSTCFLAGS = -fcommon
+
 soft: $(SOFT_BUILD)/prom.srec $(SOFT_BUILD)/ram.srec $(SOFT_BUILD)/prom.bin $(SOFT_BUILD)/prom.txt $(SOFT_BUILD)/systest.bin $(SOFT_BUILD)/ram.vhx
 
 soft-clean:
@@ -156,11 +158,11 @@ linux-patches:
 
 $(SOFT_BUILD)/linux-build/.config: $(LINUXSRC)/arch/$(ARCH)/configs/$(LINUX_CONFIG) | linux-patches
 	@$(MAKE) $(SOFT_BUILD)/linux-build
-	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG)
+	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) HOSTCFLAGS="$(LINUX_HOSTCFLAGS)" $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG)
 
 
 $(SOFT_BUILD)/linux-build/vmlinux: $(SOFT_BUILD)/sysroot.cpio $(SOFT_BUILD)/linux-build/.config
-	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE) -C $(SOFT_BUILD)/linux-build KCFLAGS="-fcommon" HOSTCFLAGS="-fcommon"
+	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) HOSTCFLAGS="$(LINUX_HOSTCFLAGS)" $(MAKE) -C $(SOFT_BUILD)/linux-build KCFLAGS="-fcommon"
 
 
 $(SOFT_BUILD)/pk-build:
@@ -248,4 +250,3 @@ VERILOG_ARIANE += $(foreach f, $(call safe_strings,$(FLISTS)/ariane_fpga_vlog.fl
 endif
 THIRDPARTY_VLOG += $(VERILOG_ARIANE)
 endif
-
