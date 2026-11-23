@@ -65,9 +65,15 @@ static irqreturn_t esp_irq(int irq, void *dev)
     struct esp_device *esp = dev_get_drvdata(dev);
     u32 status, error, done;
 
-    status = ioread32be(esp->iomem + STATUS_REG);
-    error  = status & STATUS_MASK_ERR;
-    done   = status & STATUS_MASK_DONE;
+    if (esp->third_party) {
+        status = ioread32be(esp->iomem + THIRD_PARTY_STATUS_REG);
+        error  = 0;
+        done   = !(status & THIRD_PARTY_STATUS_MASK_BUSY);
+    } else {
+        status = ioread32be(esp->iomem + STATUS_REG);
+        error  = status & STATUS_MASK_ERR;
+        done   = status & STATUS_MASK_DONE;
+    }
 
     /* printk(KERN_INFO "IRQ: %08x\n", status); */
 
@@ -292,6 +298,7 @@ static bool esp_xfer_input_ok(struct esp_device *esp, const struct contig_desc *
     iowrite32be(ioread32be(_dev->iomem + P2P_REG) |                    \
                     ((P2P_MASK_SRCS_YX & _x) << P2P_SHIFT_SRCS_X(_n)), \
                 _dev->iomem + P2P_REG)
+#define esp_mcast_reset(_dev) iowrite32be(0, _dev->iomem + MCAST_REG)
 #define esp_p2p_set_mcast_ndests(_dev, _n)                                  \
     iowrite32be(ioread32be(_dev->iomem + MCAST_REG) |                       \
                     ((MCAST_MASK_NDESTS & (_n - 1)) << MCAST_SHIFT_NDESTS), \
@@ -341,6 +348,7 @@ static long esp_p2p_init(struct esp_device *esp, struct esp_access *access)
 {
     int i = 0;
 
+    esp_mcast_reset(esp);
     esp_p2p_reset(esp);
 
     for (i = 0; i < access->p2p_nsrcs; i++)
@@ -360,10 +368,23 @@ static long esp_p2p_init(struct esp_device *esp, struct esp_access *access)
     return 0;
 }
 
+static void esp_yx_table_reset(struct esp_device *esp)
+{
+    unsigned int offset;
+    unsigned int ntable = ARRAY_SIZE(((struct esp_access *)0)->acc_yx_table);
+
+    iowrite32be(ioread32be(esp->iomem + YX_REG) & ((1U << (2 * YX_WIDTH)) - 1),
+                esp->iomem + YX_REG);
+    for (offset = 4; offset <= 4 * (ntable / 4); offset += 4)
+        iowrite32be(0, esp->iomem + YX_REG + offset);
+}
+
 static long esp_yx_table_init(struct esp_device *esp, struct esp_access *access)
 {
     int i = 0;
 
+    esp_yx_table_reset(esp);
+    
     for (i = 1; i <= access->ndev_yx_table; i++) {
         if (!esp_set_src(esp, access->acc_yx_table[i - 1], i, 1)) return -ENODEV;
     }
@@ -377,6 +398,8 @@ static int esp_access_ioctl(struct esp_device *esp, void __user *argp)
     struct esp_access *access;
     void *arg;
     int rc = 0;
+    bool lock_held = false;
+    bool runtime_configured = false;
 
     arg = kmalloc(esp->driver->arg_size, GFP_KERNEL);
     if (arg == NULL) return -ENOMEM;
@@ -398,6 +421,11 @@ static int esp_access_ioctl(struct esp_device *esp, void __user *argp)
         goto out;
     }
 
+    if (access->ndev_yx_table > ARRAY_SIZE(access->acc_yx_table)) {
+        rc = -EINVAL;
+        goto out;
+    }
+
     if (!esp_xfer_input_ok(esp, contig)) {
         rc = -EINVAL;
         goto out;
@@ -412,6 +440,7 @@ static int esp_access_ioctl(struct esp_device *esp, void __user *argp)
         rc = -EINTR;
         goto out;
     }
+    lock_held = true;
 
     rc = esp_p2p_init(esp, access);
     if (rc) { goto out; }
@@ -432,6 +461,7 @@ static int esp_access_ioctl(struct esp_device *esp, void __user *argp)
     }
 
     esp_runtime_config(esp);
+    runtime_configured = true;
 
     mutex_unlock(&esp_status.lock);
 
@@ -447,18 +477,13 @@ static int esp_access_ioctl(struct esp_device *esp, void __user *argp)
         rc = esp_wait(esp);
     }
 
-    if (mutex_lock_interruptible(&esp_status.lock)) {
-        rc = -EINTR;
-        goto out;
-    }
-
-    esp_update_status(esp);
-
-    mutex_unlock(&esp_status.lock);
-
-    mutex_unlock(&esp->lock);
-
 out:
+    if (runtime_configured) {
+        mutex_lock(&esp_status.lock);
+        esp_update_status(esp);
+        mutex_unlock(&esp_status.lock);
+    }
+    if (lock_held) mutex_unlock(&esp->lock);
     kfree(arg);
     return rc;
 }

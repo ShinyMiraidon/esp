@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2026 Columbia University, System Level Design Group
+ * Copyright (c) 2011-2025 Columbia University, System Level Design Group
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -72,7 +72,7 @@
         #define DEVNAME_LLC_CACHE "sld,llc_cache"
     #endif
 
-    #define DEVNAME_MAX_LEN 32
+    #define DEVNAME_MAX_LEN 64
 
 struct esp_device {
     unsigned vendor;
@@ -111,6 +111,7 @@ void esp_set_acc_yx_table(struct esp_device *dev, struct esp_device *srcs, unsig
     #define esp_p2p_set_x(_dev, _n, _x) \
         iowrite32(_dev, P2P_REG,        \
                   ioread32(_dev, P2P_REG) | ((P2P_MASK_SRCS_YX & _x) << P2P_SHIFT_SRCS_X(_n)))
+    #define esp_mcast_reset(_dev) iowrite32(_dev, MCAST_REG, 0)
     #define esp_p2p_set_mcast_ndests(_dev, _n) \
         iowrite32(_dev, MCAST_REG,             \
                   ioread32(_dev, MCAST_REG) |  \

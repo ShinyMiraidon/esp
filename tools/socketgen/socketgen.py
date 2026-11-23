@@ -17,6 +17,13 @@ import sys
 import re
 import math
 
+TOOLS_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+VORTEX_TOOLS = os.path.join(TOOLS_ROOT, "vortex")
+if VORTEX_TOOLS not in sys.path:
+    sys.path.append(VORTEX_TOOLS)
+
+import gt_vortex_config as gtv
+
 
 def get_immediate_subdirectories(a_dir):
     return [name for name in os.listdir(a_dir)
@@ -29,7 +36,7 @@ def print_usage():
     print("")
     print("      <arch_bits>        : Bit-width for the DMA channel (32, 64)")
     print("")
-    print("      <cpu_arch>         : Target processor (ariane, ibex, leon3)")
+    print("      <cpu_arch>         : Target processor (ariane, cva6, ibex, leon3)")
     print("")
     print("      <cache_line_size>  : Cache line size in bits (128, 256, 512, 1024)")
     print("")
@@ -1782,7 +1789,7 @@ def gen_tech_dep(
             for acc in accelerator_list:
                 for impl in acc.hlscfg:
                     f.write("\n")
-                    if acc.hls_tool == 'stratus_hls' or acc.hls_tool == 'rtl':
+                    if acc.hls_tool in ('stratus_hls', 'rtl', 'bambu'):
                         f.write(
                             "  component " +
                             acc.name +
@@ -2154,7 +2161,7 @@ def gen_tech_indep_impl(
                     f.write("use ieee.std_logic_1164.all;\n")
                     f.write("use work.sld_devices.all;\n")
                     f.write("use work.allacc.all;\n")
-                    if acc.hls_tool == 'rtl':
+                    if acc.hls_tool in ('rtl', 'bambu'):
                         f.write("library " + acc.name + ";\n")
                     f.write("\n")
                     f.write("entity " + acc.name + "_rtl is\n\n")
@@ -2199,15 +2206,13 @@ def gen_tech_indep_impl(
                                 "\n")
                             write_acc_port_map(
                                 f, acc, noc_width, impl.datatype, "rst", False, False, False, False)
-                        elif acc.hls_tool == 'rtl':
+                        elif acc.hls_tool in ('rtl', 'bambu'):
                             f.write(
                                 "    " +
                                 acc.name +
                                 "_" +
                                 impl.name +
-                                "_i: entity " +
-                                acc.name +
-                                "." +
+                                "_i: " +
                                 acc.name +
                                 "_" +
                                 impl.name +
@@ -2564,7 +2569,10 @@ def gen_noc_interface(acc, noc_width, template_dir, out_dir, is_axi):
             elif tline.find("-- <<accelerator_instance>>") >= 0:
                 f.write("  " + acc.name + "_rtl_i: ")
                 if is_axi:
-                    f.write("entity " + acc.name + "." + acc.name + "_wrapper\n")
+                    # Use component binding for third-party RTL wrappers so
+                    # unused accelerators do not require their mixed-language
+                    # library to resolve during VHDL analysis.
+                    f.write(acc.name + "_wrapper\n")
                     write_axi_acc_port_map(f, acc, noc_width)
                 else:
                     f.write(acc.name + "_rtl\n")
@@ -2728,6 +2736,11 @@ cache_list = []
 # Get scheduled accelerators
 accelerators = next(os.walk(acc_rtl_dir))[1]
 axi_accelerators = next(os.walk(axi_acc_dir))[1]
+if "ESP_THIRDPARTY_ACCELERATORS" in os.environ:
+    enabled_axi_accelerators = os.environ[
+        "ESP_THIRDPARTY_ACCELERATORS"].split()
+    axi_accelerators = [
+        acc for acc in axi_accelerators if acc in enabled_axi_accelerators]
 accelerators.sort()
 axi_accelerators.sort()
 
@@ -2806,6 +2819,51 @@ for acc in axi_accelerators:
         for xmlparam in xmlacc.findall('reset'):
             # TODO: get polarity from XML (assuming active low for now)
             accd.resets.append(xmlparam.get('name'))
+
+        if accd.name.upper() == "GT_VORTEX":
+            try:
+                num_cores = int(
+                    os.getenv(
+                        "GT_VORTEX_NUM_CORES",
+                        gtv.GT_VORTEX_DEFAULT_CORES))
+                num_warps = int(
+                    os.getenv(
+                        "GT_VORTEX_NUM_WARPS",
+                        gtv.GT_VORTEX_DEFAULT_WARPS))
+                num_threads = int(
+                    os.getenv(
+                        "GT_VORTEX_NUM_THREADS",
+                        gtv.GT_VORTEX_DEFAULT_THREADS))
+                l2_enabled = bool(int(
+                    os.getenv(
+                        "GT_VORTEX_L2_ENABLED",
+                        "1" if gtv.GT_VORTEX_DEFAULT_L2_ENABLED else "0")))
+                l3_enabled = bool(int(
+                    os.getenv(
+                        "GT_VORTEX_L3_ENABLED",
+                        "1" if gtv.GT_VORTEX_DEFAULT_L3_ENABLED else "0")))
+                accd.id_width = str(gtv.gt_vortex_tid_width(
+                    num_cores,
+                    num_warps,
+                    num_threads,
+                    gtv.gt_vortex_xlen_bits(cpu_arch),
+                    l2_enabled=l2_enabled,
+                    l3_enabled=l3_enabled))
+                print(
+                    "    INFO: Derived GT_VORTEX AXI ID width " +
+                    accd.id_width +
+                    " from cores=" +
+                    str(num_cores) +
+                    ", warps=" +
+                    str(num_warps) +
+                    ", threads=" +
+                    str(num_threads) +
+                    ", l2=" +
+                    ("on" if l2_enabled else "off") +
+                    ", l3=" +
+                    ("on" if l3_enabled else "off"))
+            except ValueError as err:
+                print("    WARNING: " + str(err) + "; keeping XML id_width=" + str(accd.id_width))
 
         axi_accelerator_list.append(accd)
         print(str(accd))
@@ -2895,6 +2953,7 @@ for acc in accelerators:
                 'vivado_hls',
                 'catapult_hls_cxx',
                 'catapult_hls_sysc',
+                'bambu',
                     'rtl'):
                 print("    ERROR: Wrong HLS tool for " + acc)
                 print(" " + accd.hls_tool)

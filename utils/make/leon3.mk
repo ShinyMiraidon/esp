@@ -33,9 +33,14 @@ soft-distclean: leon3-soft-distclean
 
 ### Leon3 prom ###
 
+# APBUART scaler for 38400 baud, rounded to nearest: freq / (38400 * 8) - 1
+UART_SCALER = $(shell echo $$(( ($(BASE_FREQ_MHZ) * 1000000 + 153600) / 307200 - 1 )))
+
+TIMER_RELOAD = $(shell echo $$(( $(BASE_FREQ_MHZ) - 1 )))
+
 $(SOFT_BUILD)/prom.o: $(BOOTROM_PATH)/prom.S $(BOOTROM_PATH)/prom.h
 	@mkdir -p $(SOFT_BUILD)
-	$(QUIET_AS) $(CROSS_COMPILE_ELF)gcc -c -I$(BOOTROM_PATH) $< -o $@
+	$(QUIET_AS) $(CROSS_COMPILE_ELF)gcc -c -I$(BOOTROM_PATH) -DUART1_SCALER=$(UART_SCALER) -DTIMER_RELOAD=$(TIMER_RELOAD) -DSTACK_TOP=$(LEON3_STACK) $< -o $@
 
 $(SOFT_BUILD)/prom.exe: $(SOFT_BUILD)/prom.o $(UTILS_GRLIB)/mkprom2/linkprom
 	$(QUIET_CC) $(CROSS_COMPILE_ELF)gcc \
@@ -58,8 +63,8 @@ $(SOFT_BUILD)/prom.out: $(SOFT_BUILD)/dummy.exe $(SOFT_BUILD)/mkprom/mkprom2
 	@cd $(SOFT_BUILD); \
 	./mkprom/mkprom2 -leon3 -freq $(BASE_FREQ_MHZ) -nomsg -baud 38343 -stack $(LEON3_STACK) dummy.exe;
 
-$(SOFT_BUILD)/prom.bin: $(SOFT_BUILD)/prom.out
-	$(QUIET_OBJCP) $(CROSS_COMPILE_ELF)objcopy -O binary --change-addresses -0x40000000 $< $@
+$(SOFT_BUILD)/prom.bin: $(SOFT_BUILD)/prom.exe
+	$(QUIET_OBJCP) $(CROSS_COMPILE_ELF)objcopy -O binary $< $@
 
 ### Leon3 Linux ###
 
@@ -92,10 +97,10 @@ $(SOFT_BUILD)/sysroot.cpio: $(SOFT_BUILD)/sysroot.files
 
 $(SOFT_BUILD)/linux-build/.config: $(LINUXSRC)/arch/sparc/configs/$(LINUX_CONFIG)
 	@$(MAKE) $(SOFT_BUILD)/linux-build
-	$(QUIET_MAKE)ARCH=sparc CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG) $(KCFLAGS)
+	$(QUIET_MAKE)ARCH=sparc CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG) KCFLAGS="$(LINUX_KCFLAGS)" HOSTCFLAGS="$(LINUX_HOSTCFLAGS)"
 
 $(SOFT_BUILD)/linux-build/vmlinux: $(SOFT_BUILD)/sysroot.cpio $(SOFT_BUILD)/linux-build/.config
-	$(QUIET_MAKE)ARCH=sparc CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE) -C $(SOFT_BUILD)/linux-build $(KCFLAGS)
+	$(QUIET_MAKE)ARCH=sparc CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE) -C $(SOFT_BUILD)/linux-build KCFLAGS="$(LINUX_KCFLAGS)" HOSTCFLAGS="$(LINUX_HOSTCFLAGS)"
 
 $(SOFT_BUILD)/linux.dsu: sysroot-update
 	$(QUIET_BUILD)mklinuximg -ethmac $(LINUX_MAC) $(SOFT_BUILD)/linux-build/vmlinux $@

@@ -329,3 +329,4 @@ flushd:
 getdw:
     retl
     ldd [%o0], %o0
+

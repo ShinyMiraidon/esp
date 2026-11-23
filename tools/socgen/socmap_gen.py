@@ -5,6 +5,7 @@
 
 from collections import defaultdict
 import math
+import sys
 from thirdparty import *
 
 # Maximum number of AHB and APB slaves can also be increased, but Leon3 utility
@@ -57,12 +58,14 @@ NACC_MAX = NAPBS - NCPU_MAX - NMEM_MAX - NTILE_MAX - 8
 RST_ADDR = dict()
 RST_ADDR["leon3"] = 0x0
 RST_ADDR["ariane"] = 0x10000
+RST_ADDR["cva6"] = 0x10000
 RST_ADDR["ibex"] = 0x80
 
 # Default start address for device tree
 RODATA_ADDR = dict()
 RODATA_ADDR["leon3"] = 0x0
 RODATA_ADDR["ariane"] = 0x10400
+RODATA_ADDR["cva6"] = 0x10400
 RODATA_ADDR["ibex"] = 0x500
 
 # Boot ROM slave index (With Leon3 this exists in simulation only for now)
@@ -75,6 +78,7 @@ AHB2APB_HINDEX = 1
 AHB2APB_HADDR = dict()
 AHB2APB_HADDR["leon3"] = 0x800
 AHB2APB_HADDR["ariane"] = 0x600
+AHB2APB_HADDR["cva6"] = 0x600
 AHB2APB_HADDR["ibex"] = 0x600
 
 # RISC-V CPU Local Interruptor index
@@ -90,14 +94,12 @@ SLM_HINDEX = 20
 DDR_HADDR = dict()
 DDR_HADDR["leon3"] = 0x400
 DDR_HADDR["ariane"] = 0x800
+DDR_HADDR["cva6"] = 0x800
 DDR_HADDR["ibex"] = 0x800
 
 # SLM base address
 SLM_HADDR = 0x040
 SLMDDR_HADDR = 0xC00
-
-# Main memory size (12 MSBs)
-DDR_SIZE = 0x400
 
 # Frame-buffer index
 FB_HINDEX = 3
@@ -173,6 +175,7 @@ class acc_info:
     id = -1
     idx = -1
     irq = 5
+    tile_id = -1
 
 
 class cache_info:
@@ -324,7 +327,7 @@ class soc_config:
         # Accelerator interrupt dynamically to each accelerator tile because
         # RISC-V PLIC does not work properly with shared lines
         acc_irq = 3
-        if self.cpu_arch == "ariane" or self.cpu_arch == "ibex":
+        if self.cpu_arch in ("ariane", "cva6", "ibex"):
             acc_irq = 5
 
         for x in range(soc.noc.rows):
@@ -383,12 +386,13 @@ class soc_config:
                     acc.irq = acc_irq
                     acc.idx = SLD_APB_PINDEX + acc_id
                     acc.vendor = soc.noc.topology[x][y].vendor
+                    acc.tile_id = t
                     if acc.vendor != "sld":
                         self.nthirdparty += 1
                     self.tiles[t].acc = acc
                     self.accelerators.append(acc)
                     acc_id = acc_id + 1
-                    if self.cpu_arch == "ariane" or self.cpu_arch == "ibex":
+                    if self.cpu_arch in ("ariane", "cva6", "ibex"):
                         acc_irq = acc_irq + 1
                         # Skip interrupt lines reserved to Ethernet
                         if acc_irq == 11:
@@ -469,6 +473,8 @@ def print_global_constants(fp, soc):
              if soc.noc.coh_noc_width.get() > soc.noc.dma_noc_width.get() else soc.noc.dma_noc_width.get()) + ";\n")
     fp.write("  constant MULTICAST_NOC_EN : integer := " +
              str(soc.noc.multicast_en.get()) + ";\n")
+    fp.write("  constant DMA_MULTI_OT_EN : integer := " +
+             str(soc.dma_multi_ot_en.get()) + ";\n")
     if soc.noc.multicast_en.get():
         fp.write("  constant MAX_MCAST_DESTS : integer := " +
                  str(soc.noc.max_mcast_dests.get()) + ";\n")
@@ -493,7 +499,7 @@ def print_global_constants(fp, soc):
 
     #
     fp.write("  ------ CPU\n")
-    fp.write("  type cpu_arch_type is (leon3, ariane, ibex);\n")
+    fp.write("  type cpu_arch_type is (leon3, ariane, cva6, ibex);\n")
     fp.write(
         "  constant GLOB_CPU_ARCH : cpu_arch_type := " +
         soc.CPU_ARCH.get() +
@@ -502,7 +508,7 @@ def print_global_constants(fp, soc):
         "  constant CPU_STR : string := \"" +
         soc.CPU_ARCH.get() +
         "\";\n")
-    if soc.CPU_ARCH.get() == "ariane":
+    if soc.CPU_ARCH.get() in ("ariane", "cva6"):
         fp.write("  constant GLOB_CPU_AXI : integer range 0 to 1 := 1;\n")
     else:
         fp.write("  constant GLOB_CPU_AXI : integer range 0 to 1 := 0;\n")
@@ -510,7 +516,7 @@ def print_global_constants(fp, soc):
         fp.write("  constant GLOB_CPU_RISCV : integer range 0 to 1 := 0;\n")
     else:
         fp.write("  constant GLOB_CPU_RISCV : integer range 0 to 1 := 1;\n")
-    if soc.CPU_ARCH.get() == "ariane":
+    if soc.CPU_ARCH.get() in ("ariane", "cva6"):
         fp.write("  constant GLOB_CPU_LLSC : integer range 0 to 1 := 1;\n")
     else:
         fp.write("  constant GLOB_CPU_LLSC : integer range 0 to 1 := 0;\n")
@@ -519,9 +525,29 @@ def print_global_constants(fp, soc):
     else:
         fp.write("  constant GLOB_YX_WIDTH : integer range 0 to 4 := 4;\n\n")
     if soc.CPU_ARCH.get() == "leon3":
-        fp.write("  constant DRAM_BASE : std_logic_vector(31 downto 0) := x\"4000_0000\";\n")
+        dram_base = 0x4000_0000
     else:
-        fp.write("  constant DRAM_BASE : std_logic_vector(31 downto 0) := x\"8000_0000\";\n")
+        dram_base = 0x8000_0000
+    fp.write("  constant DRAM_BASE : std_logic_vector(31 downto 0) := x\"" +
+              format(dram_base, '08x') + "\";\n")
+    phys_addr_space = 1 << 32
+    dram_length = soc.dram_size_mb.get() * 0x100000
+    max_dram_length = phys_addr_space - dram_base
+    if dram_length > max_dram_length:
+        print("ERROR: CONFIG_DRAM_SIZE_MB = " + str(soc.dram_size_mb.get()) +
+              " MB exceeds the maximum addressable DRAM size of " +
+              str(max_dram_length // 0x100000) + " MB for CPU_ARCH = " +
+              soc.CPU_ARCH.get() + " (DRAM_BASE = 0x" + format(dram_base, '08x') +
+              ", 32-bit physical address space ceiling).")
+        sys.exit(1)
+    fp.write("  constant DRAM_LENGTH : std_logic_vector(31 downto 0) := x\"" +
+              format(dram_length, '08x') + "\";\n")
+    slmddr_base = dram_base + dram_length
+    slmddr_length = max(0, min(0x4000_0000, phys_addr_space - slmddr_base))
+    fp.write("  constant SLMDDR_BASE : std_logic_vector(31 downto 0) := x\"" +
+              format(slmddr_base & 0xffffffff, '08x') + "\";\n")
+    fp.write("  constant SLMDDR_LENGTH : std_logic_vector(31 downto 0) := x\"" +
+              format(slmddr_length, '08x') + "\";\n")
 
 def print_global_constantsSV(fp, soc):
 
@@ -555,6 +581,12 @@ def print_global_constantsSV(fp, soc):
       fp.write("  localparam integer GLOB_YX_WIDTH = 3;\n")
     else:
       fp.write("  localparam integer GLOB_YX_WIDTH = 4;\n")
+
+    # CPU architecture enum for SystemVerilog
+    fp.write("\n  // CPU architecture type\n")
+    fp.write("  typedef enum {leon3, ariane, cva6, ibex} cpu_arch_type;\n")
+    fp.write("  localparam cpu_arch_type GLOB_CPU_ARCH = " + soc.CPU_ARCH.get() + ";\n")
+    fp.write("  localparam string CPU_STR = \"" + soc.CPU_ARCH.get() + "\";\n")
 
 def print_constants(fp, soc, esp_config):
 
@@ -1084,16 +1116,17 @@ def print_mapping(fp, soc, esp_config):
     #
     fp.write("  ----  Memory controllers\n")
     offset = DDR_HADDR[esp_config.cpu_arch]
+    ddr_size = soc.dram_size_mb.get()
     if esp_config.nmem > 0:
         # workaround for using 7 mem tiles with profpga-xcvu19p
         if esp_config.nmem > 4:
-            size = int(DDR_SIZE / 8)
+            size = int(ddr_size / 8)
         else:
-            size = int(DDR_SIZE / esp_config.nmem)
+            size = int(ddr_size / esp_config.nmem)
     else:
-        size = DDR_SIZE
+        size = ddr_size
     mask = 0xfff & ~(size - 1)
-    full_mask = 0xfff & ~(DDR_SIZE - 1)
+    full_mask = 0xfff & ~(ddr_size - 1)
 
     #
     fp.write(
@@ -1180,7 +1213,7 @@ def print_mapping(fp, soc, esp_config):
     fp.write("  constant fixed_ahbso_hconfig : ahb_slv_config_vector := (\n")
     fp.write("    " + str(AHBROM_HINDEX) + " => ahbrom_hconfig,\n")
     fp.write("    " + str(AHB2APB_HINDEX) + " => ahb2apb_hconfig,\n")
-    if esp_config.cpu_arch == "ariane" or esp_config.cpu_arch == "ibex":
+    if esp_config.cpu_arch in ("ariane", "cva6", "ibex"):
         fp.write("    " + str(RISCV_CLINT_HINDEX) + " => clint_hconfig,\n")
     for i in range(0, esp_config.nmem):
         fp.write("    " + str(DDR_HINDEX[i]) +
@@ -1205,7 +1238,7 @@ def print_mapping(fp, soc, esp_config):
         "  constant cpu_tile_fixed_ahbso_hconfig : ahb_slv_config_vector := (\n")
     fp.write("    " + str(AHBROM_HINDEX) + " => ahbrom_hconfig,\n")
     fp.write("    " + str(AHB2APB_HINDEX) + " => ahb2apb_hconfig,\n")
-    if esp_config.cpu_arch == "ariane" or esp_config.cpu_arch == "ibex":
+    if esp_config.cpu_arch in ("ariane", "cva6", "ibex"):
         fp.write("    " + str(RISCV_CLINT_HINDEX) + " => clint_hconfig,\n")
     if esp_config.nmem != 0:
         fp.write("    " + str(DDR_HINDEX[0]) + " => cpu_tile_mig7_hconfig,\n")
@@ -1233,7 +1266,7 @@ def print_mapping(fp, soc, esp_config):
         fp.write("  0 => ahb_device_reg ( VENDOR_GAISLER, GAISLER_IRQMP, 0, 3, 0),\n")
         fp.write("  1 => apb_iobar(16#002#, 16#fff#),\n")
         fp.write("  2 => (others => '0'));\n\n")
-    elif esp_config.cpu_arch == "ariane" or esp_config.cpu_arch == "ibex":
+    elif esp_config.cpu_arch in ("ariane", "cva6", "ibex"):
         fp.write("  0 => ahb_device_reg ( VENDOR_SIFIVE, SIFIVE_PLIC0, 0, 3, 0),\n")
         fp.write("  1 => apb_iobar(16#000#, 16#000#),\n")
         fp.write("  2 => apb_iobar(16#0C0#, 16#FC0#));\n\n")
@@ -2360,6 +2393,8 @@ def print_soc_defines(fp, esp_config, soc):
     if esp_config.nacc > 0:
         fp.write("#define ACCS_PRESENT 1\n")
     fp.write("#define SOC_NACC " + str(esp_config.nacc) + "\n")
+    fp.write("#define SOC_CACHE_EN " + str(soc.cache_en.get()) + "\n")
+    fp.write("#define SOC_COHERENCE " + str(1 if esp_config.coherence else 0) + "\n")
 
     if esp_config.cpu_arch == "leon3":
         fp.write("#define MONITOR_BASE_ADDR 0x80090000\n")
@@ -2456,7 +2491,7 @@ def print_devtree(fp, soc, esp_config):
     fp.write("/ {\n")
     fp.write("  #address-cells = <2>;\n")
     fp.write("  #size-cells = <2>;\n")
-    if esp_config.cpu_arch == "ariane":
+    if esp_config.cpu_arch in ("ariane", "cva6"):
         fp.write("  compatible = \"eth,ariane-bare-dev\";\n")
         fp.write("  model = \"eth,ariane-bare\";\n")
     elif esp_config.cpu_arch == "ibex":
@@ -2478,7 +2513,7 @@ def print_devtree(fp, soc, esp_config):
         fp.write("      device_type = \"cpu\";\n")
         fp.write("      reg = <" + str(i) + ">;\n")
         fp.write("      status = \"okay\";\n")
-        if esp_config.cpu_arch == "ariane":
+        if esp_config.cpu_arch in ("ariane", "cva6"):
             fp.write("      compatible = \"eth, ariane\", \"riscv\";\n")
             fp.write("      riscv,isa = \"rv64imafdc\";\n")
             fp.write("      mmu-type = \"riscv,sv39\";\n")
@@ -2488,6 +2523,7 @@ def print_devtree(fp, soc, esp_config):
             fp.write("      riscv,isa = \"rv32imc\";\n")
         fp.write("      // HLIC - hart local interrupt controller\n")
         fp.write("      CPU" + str(i) + "_intc: interrupt-controller {\n")
+        fp.write("        #address-cells = <0>;\n")
         fp.write("        #interrupt-cells = <1>;\n")
         fp.write("        interrupt-controller;\n")
         fp.write("        compatible = \"riscv,cpu-intc\";\n")
@@ -2498,11 +2534,12 @@ def print_devtree(fp, soc, esp_config):
              format(DDR_HADDR[esp_config.cpu_arch], '03x') +
              "00000 {\n")
     fp.write("    device_type = \"memory\";\n")
-    # TODO: increase memory address space.
     if esp_config.nmem != 0:
         fp.write("    reg = <0x0 0x" +
                  format(DDR_HADDR[esp_config.cpu_arch], '03x') +
-                 "00000 0x0 0x20000000>;\n")
+                 "00000 0x0 0x" +
+                 format(soc.dram_size_mb.get() * 0x100000, '08x') +
+                 ">;\n")
     else:
         # Use SLM as main memory
         fp.write("    reg = <0x0 0x" +
@@ -2577,7 +2614,7 @@ def print_devtree(fp, soc, esp_config):
     fp.write("  L26: soc {\n")
     fp.write("    #address-cells = <2>;\n")
     fp.write("    #size-cells = <2>;\n")
-    if esp_config.cpu_arch == "ariane":
+    if esp_config.cpu_arch in ("ariane", "cva6"):
         fp.write("    compatible = \"eth,ariane-bare-soc\", \"simple-bus\";\n")
     elif esp_config.cpu_arch == "ibex":
         fp.write("    compatible = \"lowrisc,lowrisc-soc\", \"simple-bus\";\n")
@@ -2760,6 +2797,12 @@ def print_devtree(fp, soc, esp_config):
             ">;\n")
         fp.write("      interrupt-parent = <&PLIC0>;\n")
         fp.write("      interrupts = <" + str(acc.irq + 1) + ">;\n")
+        fp.write("      esp,tile-id = <" + str(acc.tile_id) + ">;\n")
+        if acc.vendor != "sld":
+            if esp_config.coherence:
+                fp.write("      esp,coherence = <2>;\n")
+            else:
+                fp.write("      esp,coherence = <0>;\n")
         fp.write("      reg-shift = <2>; // regs are spaced on 32 bit boundary\n")
         fp.write("      reg-io-width = <4>; // only 32-bit access are supported\n")
         if acc.vendor != "sld" and esp_config.nmem != 0:
@@ -2776,7 +2819,7 @@ def print_cache_config(fp, soc, esp_config):
     addr_bits = 32
     byte_bits = 2
     word_bits = int(math.log2(soc.cache_line_size.get() / soc.ARCH_BITS))
-    if soc.CPU_ARCH.get() == "ariane":
+    if soc.CPU_ARCH.get() in ("ariane", "cva6"):
         addr_bits = 32
         byte_bits = 3
         word_bits = int(math.log2(soc.cache_line_size.get() / soc.ARCH_BITS))
@@ -3586,7 +3629,7 @@ def print_load_script(fp, soc, esp_config):
     fp.write("cd /opt/drivers-esp\n")
     fp.write("insmod contig_alloc.ko ")
     nmem = esp_config.nmem
-    ddr_size = int(str(DDR_SIZE)) * int(0x100000)
+    ddr_size = soc.dram_size_mb.get() * int(0x100000)
     if nmem > 0:
         size = int(ddr_size / nmem)
     sizes = []
@@ -3596,7 +3639,7 @@ def print_load_script(fp, soc, esp_config):
     line_size = int(0x10)
 
     end = start + ddr_size
-    if soc.CPU_ARCH.get() == "ariane" or soc.CPU_ARCH.get() == "ibex":
+    if soc.CPU_ARCH.get() in ("ariane", "cva6", "ibex"):
         sp = int(0xa0200000) - line_size
         if esp_config.nthirdparty > 0:
             end = int(0xb0000000)
@@ -3760,7 +3803,7 @@ def create_socmap(esp_config, soc):
     print("Created soc locations into 'soc_locs.h'")
 
     # Device tree
-    if esp_config.cpu_arch == "ariane" or esp_config.cpu_arch == "ibex":
+    if esp_config.cpu_arch in ("ariane", "cva6", "ibex"):
 
         fp = open('riscv.dts', 'w')
 

@@ -26,7 +26,7 @@ def print_usage():
     print("Usage                    : ./esp_creator.py <arch_bits> <tech_type> <tech> <linux_mac> <leon3_stack> <fpga_board> <emu_tech> <emu_freq>")
     print("")
     print("")
-    print("      <arch_bits>        : Word size for CPU architecture (32 for Leon3/Ibex, 64 for Ariane)")
+    print("      <arch_bits>        : Word size for CPU architecture (32 for Leon3/Ibex, 64 for Ariane/CVA6)")
     print("      <tech_type>        : Technology type (fpga or asic)")
     print("      <tech>             : Target technology (e.g. virtex7, virtexu, virtexup, ...)")
     print("      <linux_mac>        : MAC Address for Linux network interface")
@@ -124,6 +124,7 @@ class StyledComponents:
             variable=variable,
             text="",
             state=state,
+            command=command,
             fg_color="green",
             border_color="grey",
             corner_radius=0,
@@ -153,7 +154,7 @@ class StyledComponents:
 
 class SocConfigFrame:
     def set_cpu_specific_labels(self, soc):
-        if soc.CPU_ARCH.get() == "ariane":
+        if soc.CPU_ARCH.get() in ("ariane", "cva6"):
             self.fpu_value.configure(text="ETH FPnew")
         elif soc.CPU_ARCH.get() == "leon3" and soc.LEON3_HAS_FPU == "7":
             self.fpu_value.configure(text="SLD FPU")
@@ -191,7 +192,7 @@ class SocConfigFrame:
             self.fpga_value_frame, self.fpga_board_text)
 
         # CPU Architecture
-        self.cpu_choices = ["leon3", "ariane", "ibex"]
+        self.cpu_choices = ["leon3", "ariane", "cva6", "ibex"]
         self.cpu_label = StyledComponents.KeyLabel(
             self.soc_config_frame, "CPU Architecture", 3, 0)
         self.cpu_value_frame = ctk.CTkFrame(self.soc_config_frame)
@@ -231,6 +232,30 @@ class SocConfigFrame:
             self.slm_value_frame,
             self.soc.slm_kbytes,
             self.slm_kbytes_choices,
+            command=main_frame.update_noc_config)
+
+        # Multiple outstanding DMA reads at the memory-tile AXI proxy.
+        # Off by default: clearing it makes the memory tile serve DMA reads
+        # one at a time, as before.
+        self.dma_multi_ot_label, self.dma_multi_ot_checkbox = \
+            StyledComponents.CheckBoxWithLabel(
+                self.soc_config_frame,
+                self.soc.dma_multi_ot_en,
+                "Multi-outstanding DMA",
+                "normal", 7, 0,
+                command=main_frame.update_noc_config)
+
+        # DRAM Size
+        self.dram_size_choices = [
+            "1024", "2048"]
+        self.dram_size_label = StyledComponents.KeyLabel(
+            self.soc_config_frame, "DDR Size (MB)", 8, 0)
+        self.dram_size_value_frame = ctk.CTkFrame(self.soc_config_frame)
+        self.dram_size_value_frame.grid(row=8, column=1, pady=(5, 20), padx=15)
+        self.dram_size_value_menu = StyledComponents.OptionMenu(
+            self.dram_size_value_frame,
+            self.soc.dram_size_mb,
+            self.dram_size_choices,
             command=main_frame.update_noc_config)
 
 
@@ -554,6 +579,11 @@ class CachesConfigFrame:
             command=main_frame.update_noc_config)
 
 class AdvancedConfigFrame:
+    def on_clock_strategy_change(self, selected_label):
+        # Map GUI label -> numeric config value expected by soc.py/socmap_gen.py
+        self.soc.clk_str.set(self.clk_strategy_to_id.get(selected_label, 0))
+        self.main_frame.update_noc_config()
+
     def __init__(self, soc, left_panel, main_frame):
         self.soc = soc
         self.left_panel = left_panel
@@ -563,53 +593,139 @@ class AdvancedConfigFrame:
         self.adv_frame.pack(padx=(8, 3), pady=(10, 20), fill="x")
         self.title_label = StyledComponents.Header(
             self.adv_frame, "Advanced Settings", 0, 0)
-        # self.title_label.grid(row=0, column=0, columnspan=2, pady=10)
 
         self.clk_label = ctk.CTkLabel(
             self.adv_frame,
             text="Clock Strategy",
-            font=(
-                "Arial",
-                10))
+            font=("Arial", 10))
         self.clk_label.grid(row=1, column=0, sticky="w", pady=5, padx=(20, 40))
         self.clk_value_frame = ctk.CTkFrame(self.adv_frame)
         self.clk_value_frame.grid(row=1, column=1, pady=5, padx=20)
 
+        self.clk_strategy_labels = ["Dual external", "Multi DCO", "Single DCO"]
+        self.clk_strategy_to_id = {
+            "Dual external": 0,
+            "Multi DCO": 1,
+            "Single DCO": 2
+        }
+
+        # Initialize menu label from existing numeric config value.
+        current_id = self.soc.clk_str.get()
+        if current_id < 0 or current_id >= len(self.clk_strategy_labels):
+            current_id = 0
+        self.clk_str_label = StringVar(value=self.clk_strategy_labels[current_id])
+
         if soc.TECH_TYPE == "asic" or soc.TECH == "inferred" or soc.ESP_EMU_TECH != "none":
             self.clk_value_menu = ctk.CTkOptionMenu(
                 self.clk_value_frame,
-                variable=self.soc.clk_str,
-                values=[
-                    "Dual external",
-                    "Multi DCO",
-                    "Single DCO"],
+                variable=self.clk_str_label,
+                values=self.clk_strategy_labels,
                 fg_color="white",
                 bg_color="#e8e8e8",
                 button_color="#e8e8e8",
                 width=200,
                 text_color="black",
-                font=(
-                    "Arial",
-                    10),
+                font=("Arial", 10),
                 button_hover_color="lightgrey",
                 anchor="center",
                 dropdown_fg_color="white",
-                dropdown_font=(
-                    "Arial",
-                    10),
+                dropdown_font=("Arial", 10),
                 dropdown_hover_color="#e8e8e8",
-                command=main_frame.update_noc_config)
+                command=self.on_clock_strategy_change)
             self.clk_value_menu.pack(anchor="center", padx=3, pady=3)
         else:
             self.clk_value = ctk.CTkLabel(
                 self.clk_value_frame,
-                text="Dual external clocks",
+                text="Dual external",
                 width=200,
-                font=(
-                    "Arial",
-                    10,
-                    "bold"))
+                font=("Arial", 10, "bold"))
             self.clk_value.pack(anchor="center", padx=3, pady=3)
+
+
+class VortexConfigFrame:
+    def __init__(self, soc, left_panel, main_frame):
+        self.soc = soc
+        self.left_panel = left_panel
+        self.main_frame = main_frame
+
+        self.vortex_frame = ctk.CTkFrame(self.left_panel, fg_color="#ebebeb")
+        self.vortex_frame.pack(padx=(8, 3), pady=(10, 20), fill="x")
+        self.title_label = StyledComponents.Header(
+            self.vortex_frame, "Vortex Configuration", 0, 0)
+
+
+        self.cores_label = ctk.CTkLabel(
+            self.vortex_frame,
+            text="Cores",
+            font=("Arial", 10))
+        self.cores_label.grid(row=2, column=0, padx=20, pady=5, sticky="w")
+        self.cores_frame = ctk.CTkFrame(self.vortex_frame)
+        self.cores_frame.grid(row=2, column=1, padx=20, pady=5)
+        self.cores_dd = StyledComponents.OptionMenu(
+            self.cores_frame,
+            self.soc.gt_vortex_num_cores,
+            self._as_strings(self.soc.gt_vortex_compatible_core_choices()),
+            width=160,
+            command=main_frame.update_noc_config)
+
+        self.warps_label = ctk.CTkLabel(
+            self.vortex_frame,
+            text="Warps",
+            font=("Arial", 10))
+        self.warps_label.grid(row=3, column=0, padx=20, pady=5, sticky="w")
+        self.warps_frame = ctk.CTkFrame(self.vortex_frame)
+        self.warps_frame.grid(row=3, column=1, padx=20, pady=5)
+        self.warps_dd = StyledComponents.OptionMenu(
+            self.warps_frame,
+            self.soc.gt_vortex_num_warps,
+            self._as_strings(self.soc.gt_vortex_warp_choices()),
+            width=160,
+            command=main_frame.update_noc_config)
+
+        self.threads_label = ctk.CTkLabel(
+            self.vortex_frame,
+            text="Threads",
+            font=("Arial", 10))
+        self.threads_label.grid(row=4, column=0, padx=20, pady=5, sticky="w")
+        self.threads_frame = ctk.CTkFrame(self.vortex_frame)
+        self.threads_frame.grid(row=4, column=1, padx=20, pady=5)
+        self.threads_dd = StyledComponents.OptionMenu(
+            self.threads_frame,
+            self.soc.gt_vortex_num_threads,
+            self._as_strings(self.soc.gt_vortex_compatible_thread_choices()),
+            width=160,
+            command=main_frame.update_noc_config)
+
+        self.l2_label, self.l2_checkbox = StyledComponents.CheckBoxWithLabel(
+            self.vortex_frame,
+            self.soc.gt_vortex_l2_enabled,
+            "L2 Cache",
+            "normal",
+            5,
+            0,
+            command=main_frame.update_noc_config)
+        self.l3_label, self.l3_checkbox = StyledComponents.CheckBoxWithLabel(
+            self.vortex_frame,
+            self.soc.gt_vortex_l3_enabled,
+            "L3 Cache",
+            "normal",
+            5,
+            1,
+            command=main_frame.update_noc_config)
+        self.refresh()
+
+    def _as_strings(self, values):
+        return [str(value) for value in values]
+
+    def refresh(self):
+        self.soc.sanitize_gt_vortex_config()
+        self.cores_dd.configure(
+            values=self._as_strings(self.soc.gt_vortex_compatible_core_choices()))
+        self.warps_dd.configure(
+            values=self._as_strings(self.soc.gt_vortex_warp_choices()))
+        self.threads_dd.configure(
+            values=self._as_strings(self.soc.gt_vortex_compatible_thread_choices()))
+
 
 
 class EspCreator:
@@ -682,6 +798,8 @@ class EspCreator:
         self.debug_link_config_frame.update_frame()
         self.adv_config_frame = AdvancedConfigFrame(
             self.soc, self.left_panel, self)
+        self.vortex_config_frame = VortexConfigFrame(
+            self.soc, self.left_panel, self)
         self.caches_config_frame = CachesConfigFrame(
             self.soc, self.left_panel, self)
         self.noc_config_frame = NoCConfigFrame(
@@ -709,7 +827,7 @@ class EspCreator:
         self.noc_config_frame.update_frame()
 
     def update_noc_config(self, *args):
-        if soc.CPU_ARCH.get() == "ariane":
+        if soc.CPU_ARCH.get() in ("ariane", "cva6"):
             self.soc.ARCH_BITS = 64
         else:
             self.soc.ARCH_BITS = 32
@@ -719,6 +837,7 @@ class EspCreator:
             soc.CPU_ARCH.get())
         self.soc.update_list_of_ips()
         self.soc.changed()
+        self.vortex_config_frame.refresh()
         self.noc_config_frame.changed()
 
     def generate_files(self):

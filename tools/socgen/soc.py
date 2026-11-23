@@ -11,6 +11,13 @@ import sys
 import re
 import NoCConfiguration as ncfg
 
+TOOLS_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+VORTEX_TOOLS = os.path.join(TOOLS_ROOT, "vortex")
+if VORTEX_TOOLS not in sys.path:
+    sys.path.append(VORTEX_TOOLS)
+
+import gt_vortex_config as gtv
+
 
 def get_immediate_subdirectories(a_dir):
     return [name for name in os.listdir(a_dir)
@@ -99,6 +106,12 @@ class SoC_Config():
     TECH = "virtex7"
     FPGA_BOARD = "xilinx-vc707-xc7vx485t"
     ARCH_BITS = 32
+    GT_VORTEX_DEFAULT_CORES = gtv.GT_VORTEX_DEFAULT_CORES
+    GT_VORTEX_DEFAULT_WARPS = gtv.GT_VORTEX_DEFAULT_WARPS
+    GT_VORTEX_DEFAULT_THREADS = gtv.GT_VORTEX_DEFAULT_THREADS
+    GT_VORTEX_DEFAULT_L2_ENABLED = gtv.GT_VORTEX_DEFAULT_L2_ENABLED
+    GT_VORTEX_DEFAULT_L3_ENABLED = gtv.GT_VORTEX_DEFAULT_L3_ENABLED
+    GT_VORTEX_MAX_TID_WIDTH = gtv.GT_VORTEX_MAX_TID_WIDTH
 
     def changed(self, *args):
         if self.cache_impl.get() == "ESP RTL":
@@ -120,6 +133,127 @@ class SoC_Config():
     def update_list_of_ips(self):
         self.list_of_ips = tuple(self.IPs.EMPTY) + tuple(self.IPs.PROCESSORS) + tuple(
             self.IPs.MISC) + tuple(self.IPs.MEM) + tuple(self.IPs.SLM) + tuple(self.IPs.ACCELERATORS)
+
+    def parse_config_int(self, line, fallback):
+        item = line.split()
+        if len(item) < 3:
+            return fallback
+        try:
+            return int(item[2])
+        except Exception:
+            return fallback
+
+    def gt_vortex_xlen_bits(self):
+        return gtv.gt_vortex_xlen_bits(self.CPU_ARCH.get())
+
+    def gt_vortex_tid_width(
+            self,
+            num_cores=None,
+            num_warps=None,
+            num_threads=None,
+            l2_enabled=None,
+            l3_enabled=None):
+        if num_cores is None:
+            num_cores = self.gt_vortex_num_cores.get()
+        if num_warps is None:
+            num_warps = self.gt_vortex_num_warps.get()
+        if num_threads is None:
+            num_threads = self.gt_vortex_num_threads.get()
+        if l2_enabled is None:
+            l2_enabled = self.gt_vortex_l2_enabled.get()
+        if l3_enabled is None:
+            l3_enabled = self.gt_vortex_l3_enabled.get()
+        return gtv.gt_vortex_tid_width(
+            num_cores,
+            num_warps,
+            num_threads,
+            self.gt_vortex_xlen_bits(),
+            l2_enabled=l2_enabled,
+            l3_enabled=l3_enabled)
+
+    def gt_vortex_warp_choices(self):
+        return gtv.gt_vortex_warp_candidates()
+
+    def gt_vortex_compatible_core_choices(self, num_threads=None):
+        if num_threads is None:
+            num_threads = self.gt_vortex_num_threads.get()
+        return gtv.gt_vortex_compatible_core_choices(
+            self.gt_vortex_num_warps.get(),
+            num_threads,
+            self.gt_vortex_xlen_bits(),
+            self.GT_VORTEX_MAX_TID_WIDTH,
+            l2_enabled=self.gt_vortex_l2_enabled.get(),
+            l3_enabled=self.gt_vortex_l3_enabled.get())
+
+    def gt_vortex_compatible_thread_choices(self, num_cores=None):
+        if num_cores is None:
+            num_cores = self.gt_vortex_num_cores.get()
+        return gtv.gt_vortex_compatible_thread_choices(
+            num_cores,
+            self.gt_vortex_num_warps.get(),
+            self.gt_vortex_xlen_bits(),
+            self.GT_VORTEX_MAX_TID_WIDTH,
+            l2_enabled=self.gt_vortex_l2_enabled.get(),
+            l3_enabled=self.gt_vortex_l3_enabled.get())
+
+    def gt_vortex_is_compatible(self, num_cores=None, num_warps=None, num_threads=None):
+        if num_cores is None:
+            num_cores = self.gt_vortex_num_cores.get()
+        if num_warps is None:
+            num_warps = self.gt_vortex_num_warps.get()
+        if num_threads is None:
+            num_threads = self.gt_vortex_num_threads.get()
+        return gtv.gt_vortex_is_compatible(
+            num_cores,
+            num_warps,
+            num_threads,
+            self.gt_vortex_xlen_bits(),
+            self.GT_VORTEX_MAX_TID_WIDTH,
+            l2_enabled=self.gt_vortex_l2_enabled.get(),
+            l3_enabled=self.gt_vortex_l3_enabled.get())
+
+    def _nearest_choice(self, current, choices, fallback):
+        if current in choices:
+            return current
+        if len(choices) == 0:
+            return fallback
+        return min(choices, key=lambda value: (abs(value - current), abs(value - fallback), value))
+
+    def sanitize_gt_vortex_config(self):
+        warp_choices = self.gt_vortex_warp_choices()
+        self.gt_vortex_num_warps.set(
+            self._nearest_choice(
+                self.gt_vortex_num_warps.get(),
+                warp_choices,
+                self.GT_VORTEX_DEFAULT_WARPS))
+
+        compatible_pairs = gtv.gt_vortex_compatible_pairs(
+            self.gt_vortex_num_warps.get(),
+            self.gt_vortex_xlen_bits(),
+            self.GT_VORTEX_MAX_TID_WIDTH,
+            l2_enabled=self.gt_vortex_l2_enabled.get(),
+            l3_enabled=self.gt_vortex_l3_enabled.get())
+        if len(compatible_pairs) == 0:
+            self.gt_vortex_num_cores.set(self.GT_VORTEX_DEFAULT_CORES)
+            self.gt_vortex_num_threads.set(self.GT_VORTEX_DEFAULT_THREADS)
+            return
+
+        current_core = self.gt_vortex_num_cores.get()
+        current_thread = self.gt_vortex_num_threads.get()
+        default_pair = (
+            self.GT_VORTEX_DEFAULT_CORES,
+            self.GT_VORTEX_DEFAULT_THREADS)
+        best_core, best_thread = min(
+            compatible_pairs,
+            key=lambda pair: (
+                abs(pair[0] - current_core) + abs(pair[1] - current_thread),
+                abs(pair[1] - current_thread),
+                abs(pair[0] - current_core),
+                abs(pair[0] - default_pair[0]) + abs(pair[1] - default_pair[1]),
+                pair[0],
+                pair[1]))
+        self.gt_vortex_num_cores.set(best_core)
+        self.gt_vortex_num_threads.set(best_thread)
 
     def read_config(self, temporary):
         filename = ".esp_config"
@@ -161,7 +295,7 @@ class SoC_Config():
         line = fp.readline()
         item = line.split()
         self.CPU_ARCH.set(item[2])
-        if item[2] == "ariane":
+        if item[2] in ("ariane", "cva6"):
             self.ARCH_BITS = 64
         else:
             self.ARCH_BITS = 32
@@ -198,9 +332,14 @@ class SoC_Config():
         item = line.split()
         self.noc.max_mcast_dests.set(int(item[2]))
         line = fp.readline()
-        item = line.split()
-        self.noc.queue_size.set(int(item[2]))
-        line = fp.readline()
+        if line.find("CONFIG_QUEUE_SIZE =") != -1:
+            item = line.split()
+            self.noc.queue_size.set(int(item[2]))
+            line = fp.readline()
+        else:
+            # Older defconfigs did not store the router FIFO depth explicitly.
+            # Keep the long-standing default and continue parsing the current line.
+            self.noc.queue_size.set(4)
         if line.find("CONFIG_CACHE_EN = y") != -1:
             self.cache_en.set(1)
         else:
@@ -242,6 +381,9 @@ class SoC_Config():
         line = fp.readline()
         item = line.split()
         self.slm_kbytes.set(int(item[2]))
+        line = fp.readline()
+        item = line.split()
+        self.dram_size_mb.set(int(item[2]))
         # JTAG (test)
         line = fp.readline()
         if line.find("CONFIG_JTAG_EN = y") != -1:
@@ -294,8 +436,32 @@ class SoC_Config():
             self.sync_en.set(0)
         else:
             self.sync_en.set(1)
-        # Monitors
+        # Optional GT_VORTEX tuning knobs (older .esp_config files may not
+        # include these keys).
+        self.gt_vortex_l2_enabled.set(self.GT_VORTEX_DEFAULT_L2_ENABLED)
+        self.gt_vortex_l3_enabled.set(self.GT_VORTEX_DEFAULT_L3_ENABLED)
         line = fp.readline()
+        while line.find("CONFIG_GT_VORTEX_") != -1:
+            if line.find("CONFIG_GT_VORTEX_NUM_CORES") != -1:
+                self.gt_vortex_num_cores.set(self.parse_config_int(
+                    line, self.GT_VORTEX_DEFAULT_CORES))
+            elif line.find("CONFIG_GT_VORTEX_NUM_WARPS") != -1:
+                self.gt_vortex_num_warps.set(self.parse_config_int(
+                    line, self.GT_VORTEX_DEFAULT_WARPS))
+            elif line.find("CONFIG_GT_VORTEX_NUM_THREADS") != -1:
+                self.gt_vortex_num_threads.set(self.parse_config_int(
+                    line, self.GT_VORTEX_DEFAULT_THREADS))
+            elif line.find("CONFIG_GT_VORTEX_L2_EN = y") != -1:
+                self.gt_vortex_l2_enabled.set(1)
+            elif line.find("CONFIG_GT_VORTEX_L2_EN") != -1:
+                self.gt_vortex_l2_enabled.set(0)
+            elif line.find("CONFIG_GT_VORTEX_L3_EN = y") != -1:
+                self.gt_vortex_l3_enabled.set(1)
+            elif line.find("CONFIG_GT_VORTEX_L3_EN") != -1:
+                self.gt_vortex_l3_enabled.set(0)
+            line = fp.readline()
+        self.sanitize_gt_vortex_config()
+        # Monitors
         if line.find("CONFIG_MON_DDR = y") != -1:
             self.noc.monitor_ddr.set(1)
         line = fp.readline()
@@ -341,6 +507,18 @@ class SoC_Config():
         line = fp.readline()
         line = fp.readline()
         item = line.split()
+        # Optional trailing knobs (absent in older configuration files):
+        # multiple outstanding DMA reads at the memory-tile AXI proxy.
+        # Defaults to 0 (the memory tile serves DMA reads one at a time) when
+        # the line is missing, so existing .esp_config files are unaffected.
+        # NOTE: the DVFS skip above may already have consumed the first
+        # trailing line into `line`, so scan starting from it rather than from
+        # the next readline.
+        self.dma_multi_ot_en.set(0)
+        while line:
+            if line.find("CONFIG_DMA_MULTI_OT_EN = y") != -1:
+                self.dma_multi_ot_en.set(1)
+            line = fp.readline()
         return 0
 
     def write_config(self, dsu_ip, dsu_eth):
@@ -393,6 +571,7 @@ class SoC_Config():
         fp.write("CONFIG_CACHE_LINE_SIZE = " +
                  str(self.cache_line_size.get()) + "\n")
         fp.write("CONFIG_SLM_KBYTES = " + str(self.slm_kbytes.get()) + "\n")
+        fp.write("CONFIG_DRAM_SIZE_MB = " + str(self.dram_size_mb.get()) + "\n")
         if self.jtag_en.get() == 1:
             fp.write("CONFIG_JTAG_EN = y\n")
         else:
@@ -423,6 +602,21 @@ class SoC_Config():
         fp.write("CONFIG_DSU_IP = " + self.dsu_ip + "\n")
         fp.write("CONFIG_DSU_ETH = " + self.dsu_eth + "\n")
         fp.write("CONFIG_CLK_STR = " + str(self.clk_str.get()) + "\n")
+        self.sanitize_gt_vortex_config()
+        fp.write("CONFIG_GT_VORTEX_NUM_CORES = " +
+                 str(self.gt_vortex_num_cores.get()) + "\n")
+        fp.write("CONFIG_GT_VORTEX_NUM_WARPS = " +
+                 str(self.gt_vortex_num_warps.get()) + "\n")
+        fp.write("CONFIG_GT_VORTEX_NUM_THREADS = " +
+                 str(self.gt_vortex_num_threads.get()) + "\n")
+        if self.gt_vortex_l2_enabled.get() == 1:
+            fp.write("CONFIG_GT_VORTEX_L2_EN = y\n")
+        else:
+            fp.write("#CONFIG_GT_VORTEX_L2_EN is not set\n")
+        if self.gt_vortex_l3_enabled.get() == 1:
+            fp.write("CONFIG_GT_VORTEX_L3_EN = y\n")
+        else:
+            fp.write("#CONFIG_GT_VORTEX_L3_EN is not set\n")
         if self.noc.monitor_ddr.get() == 1:
             fp.write("CONFIG_MON_DDR = y\n")
         else:
@@ -501,6 +695,13 @@ class SoC_Config():
             fp.write("CONFIG_HAS_DVFS = y\n")
         else:
             fp.write("#CONFIG_HAS_DVFS is not set\n")
+        # Trailing optional knobs. These must stay after every positional
+        # entry: read_config parses the file positionally and scans only the
+        # tail for them.
+        if self.dma_multi_ot_en.get() == 1:
+            fp.write("CONFIG_DMA_MULTI_OT_EN = y\n")
+        else:
+            fp.write("#CONFIG_DMA_MULTI_OT_EN is not set\n")
 
     def check_cfg(self, line, token, end):
         line = line[line.find(token) + len(token):]
@@ -550,8 +751,12 @@ class SoC_Config():
         self.acc_l2_sets = IntVar(master=tk_master)
         self.acc_l2_ways = IntVar(master=tk_master)
         self.cache_line_size = IntVar(master=tk_master)
+        # Multiple outstanding DMA reads at the memory-tile AXI proxy
+        # (0 = the memory tile serves DMA reads one at a time, 1 = enabled)
+        self.dma_multi_ot_en = IntVar(master=tk_master)
         # SLM
         self.slm_kbytes = IntVar(master=tk_master)
+        self.dram_size_mb = IntVar(master=tk_master, value=1024)
         # Peripherals
         self.jtag_en = IntVar(master=tk_master)
         self.eth_en = IntVar(master=tk_master)
@@ -571,6 +776,18 @@ class SoC_Config():
         # Advanced Configuration
         self.clk_str = IntVar(master=tk_master)
         self.sync_en = IntVar(master=tk_master)
+        # GT_VORTEX (GUI choices are filtered to configurations whose derived
+        # AXI ID width stays within ESP's third-party accelerator limit)
+        self.gt_vortex_num_cores = IntVar(master=tk_master)
+        self.gt_vortex_num_warps = IntVar(master=tk_master)
+        self.gt_vortex_num_threads = IntVar(master=tk_master)
+        self.gt_vortex_l2_enabled = IntVar(master=tk_master)
+        self.gt_vortex_l3_enabled = IntVar(master=tk_master)
+        self.gt_vortex_num_cores.set(self.GT_VORTEX_DEFAULT_CORES)
+        self.gt_vortex_num_warps.set(self.GT_VORTEX_DEFAULT_WARPS)
+        self.gt_vortex_num_threads.set(self.GT_VORTEX_DEFAULT_THREADS)
+        self.gt_vortex_l2_enabled.set(self.GT_VORTEX_DEFAULT_L2_ENABLED)
+        self.gt_vortex_l3_enabled.set(self.GT_VORTEX_DEFAULT_L3_ENABLED)
 
         # Define whether SGMII has to be used or not: it is not used for
         # ProFPGA boards

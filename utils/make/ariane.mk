@@ -8,15 +8,14 @@ RISCV_TESTS = $(SOFT)/riscv-tests
 RISCV_PK = $(SOFT)/riscv-pk
 OPENSBI = $(SOFT)/opensbi
 
-LINUX_HOSTCFLAGS = -fcommon
-
-soft: $(SOFT_BUILD)/prom.srec $(SOFT_BUILD)/ram.srec $(SOFT_BUILD)/prom.bin $(SOFT_BUILD)/systest.bin $(SOFT_BUILD)/ram.vhx
+soft: $(SOFT_BUILD)/prom.srec $(SOFT_BUILD)/ram.srec $(SOFT_BUILD)/prom.bin $(SOFT_BUILD)/prom.txt $(SOFT_BUILD)/systest.bin $(SOFT_BUILD)/ram.vhx
 
 soft-clean:
-	$(QUIET_CLEAN)$(RM)		 	\
-		$(SOFT_BUILD)/prom.srec 	\
+	$(QUIET_CLEAN)$(RM)			\
+		$(SOFT_BUILD)/prom.srec		\
 		$(SOFT_BUILD)/ram.srec		\
 		$(SOFT_BUILD)/prom.exe		\
+		$(SOFT_BUILD)/prom.txt		\
 		$(SOFT_BUILD)/systest.exe	\
 		$(SOFT_BUILD)/prom.bin		\
 		$(SOFT_BUILD)/riscv.dtb		\
@@ -24,7 +23,8 @@ soft-clean:
 		$(SOFT_BUILD)/main.o		\
 		$(SOFT_BUILD)/uart.o		\
 		$(SOFT_BUILD)/systest.bin	\
-		$(SOFT_BUILD)/ram.vhx8
+		$(SOFT_BUILD)/ram.vhx		\
+		$(SOFT_BUILD)/vhx.bin
 
 soft-distclean: soft-clean
 
@@ -72,7 +72,7 @@ $(SOFT_BUILD)/prom.exe: $(SOFT_BUILD)/startup.o $(SOFT_BUILD)/uart.o $(SOFT_BUIL
 		-nostdlib -nodefaultlibs -nostartfiles \
 		-T$(BOOTROM_PATH)/linker.lds \
 		$(SOFT_BUILD)/startup.o $(SOFT_BUILD)/uart.o $(SOFT_BUILD)/main.o \
-		-o $@
+		-o $(SOFT_BUILD)/prom.exe
 
 $(SOFT_BUILD)/prom.srec: $(SOFT_BUILD)/prom.exe
 	@mkdir -p $(SOFT_BUILD)
@@ -81,6 +81,10 @@ $(SOFT_BUILD)/prom.srec: $(SOFT_BUILD)/prom.exe
 $(SOFT_BUILD)/prom.bin: $(SOFT_BUILD)/prom.exe
 	@mkdir -p $(SOFT_BUILD)
 	$(QUIET_OBJCP) $(CROSS_COMPILE_ELF)objcopy -O binary $< $@
+
+$(SOFT_BUILD)/prom.txt: $(SOFT_BUILD)/prom.bin $(SOFT_BUILD)/systest.bin
+	@mkdir -p $(SOFT_BUILD)
+	python3 $(ESP_ROOT)/utils/scripts/file_handling/bin2txt.py $(CPU_ARCH)
 
 
 RISCV_CFLAGS  = -I$(RISCV_TESTS)/env
@@ -91,35 +95,36 @@ RISCV_CFLAGS += -static
 RISCV_CFLAGS += -std=gnu99
 RISCV_CFLAGS += -O2
 RISCV_CFLAGS += -ffast-math
-RISCV_CFLAGS += -fno-common
 RISCV_CFLAGS += -fno-builtin-printf
 RISCV_CFLAGS += -nostdlib
 RISCV_CFLAGS += -nostartfiles -lm -lgcc
 
-$(SOFT_BUILD)/systest.exe: systest.c $(SOFT_BUILD)/uart.o
+$(SOFT_BUILD)/systest.exe: systest.c $(SOFT_BUILD)/uart.o $(SOFT)/common/syscalls.c $(RISCV_TESTS)/benchmarks/common/crt.S $(RISCV_TESTS)/benchmarks/common/test.ld
 	@mkdir -p $(SOFT_BUILD)
 	$(QUIET_CC) $(CROSS_COMPILE_ELF)gcc $(RISCV_CFLAGS) \
 	$(SOFT)/common/syscalls.c \
-	$(RISCV_TESTS)/benchmarks/common/crt.S  \
+	$(RISCV_TESTS)/benchmarks/common/crt.S	\
 	-T $(RISCV_TESTS)/benchmarks/common/test.ld -o $@ \
 	-I$(DESIGN_PATH)/$(ESP_CFG_BUILD) \
 	$(SOFT_BUILD)/uart.o $<
 
 $(SOFT_BUILD)/systest.bin: $(TEST_PROGRAM)
 	@mkdir -p $(SOFT_BUILD)
-	$(QUIET_OBJCP) riscv64-unknown-elf-objcopy -O binary $< $@
+	$(QUIET_OBJCP) $(CROSS_COMPILE_ELF)objcopy -O binary $< $@
 
 $(SOFT_BUILD)/ram.srec: $(TEST_PROGRAM)
 	@mkdir -p $(SOFT_BUILD)
-	$(QUIET_OBJCP) riscv64-unknown-elf-objcopy -O srec --gap-fill 0 $< $@
+	$(QUIET_OBJCP) $(CROSS_COMPILE_ELF)objcopy -O srec --gap-fill 0 $< $@
 	@if [ -n "$(SIM_DATA_FILES)" ]; then\
 		python3 $(ESP_ROOT)/utils/scripts/srec/modify_srec.py $@ $(SIM_DATA_FILES) $(START_ADDRS);\
 	fi
 
-$(SOFT_BUILD)/ram.vhx: $(SOFT_BUILD)/systest.bin $(SOFT_BUILD)/vhx.bin
-
-$(SOFT_BUILD)/vhx.bin: $(TEST_PROGRAM)
+$(SOFT_BUILD)/ram.vhx: $(SOFT_BUILD)/systest.bin
+	@mkdir -p $(SOFT_BUILD)
 	python3 $(ESP_ROOT)/utils/scripts/file_handling/bin2txt_vhx.py 64 ariane
+
+$(SOFT_BUILD)/vhx.bin: $(SOFT_BUILD)/ram.vhx
+	@touch $@
 
 $(SOFT_BUILD)/sysroot:
 	@mkdir -p $(SOFT_BUILD)
@@ -130,8 +135,8 @@ $(SOFT_BUILD)/sysroot.files: $(SOFT_BUILD)/sysroot
 	$(QUIET_MAKE)$(MAKE) -C ${LINUXSRC}/usr gen_init_cpio
 	$(QUIET_INFO)echo "Generating root file-system list..."
 	@sh ${LINUXSRC}/usr/gen_initramfs_list.sh -u `id -u` -g `id -g` $< \
-	    | sed -e 's/^file \(\/bin\/busybox .*\) 755 0 0/file \1 4755 0 0/' \
-	    > $@;
+		| sed -e 's/^file \(\/bin\/busybox .*\) 755 0 0/file \1 4755 0 0/' \
+		> $@;
 	@echo "nod /dev/console 622 0 0 c 5 1" >> $@
 	@touch $@
 
@@ -139,14 +144,23 @@ $(SOFT_BUILD)/sysroot.files: $(SOFT_BUILD)/sysroot
 $(SOFT_BUILD)/sysroot.cpio: $(SOFT_BUILD)/sysroot.files
 	$(QUIET_BUILD)${LINUXSRC}/usr/gen_init_cpio $< > $@
 
+# Patch the kernel source tree for the in-tree dtc on
+# GCC >= 10 (Ubuntu 22.04+, RHEL 9+), where -fno-common is the default
+.PHONY: linux-patches
+linux-patches:
+	if grep -q -- '-fcommon' $(LINUXSRC)/scripts/dtc/Makefile; then :; \
+	else \
+		echo "	PATCH	 linux-dtc-fcommon.patch"; \
+		patch -p1 -s -d $(LINUXSRC) -i $(ESP_ROOT)/utils/toolchain/patches/linux-dtc-fcommon.patch; \
+	fi
 
-$(SOFT_BUILD)/linux-build/.config: $(LINUXSRC)/arch/$(ARCH)/configs/$(LINUX_CONFIG)
+$(SOFT_BUILD)/linux-build/.config: $(LINUXSRC)/arch/$(ARCH)/configs/$(LINUX_CONFIG) | linux-patches
 	@$(MAKE) $(SOFT_BUILD)/linux-build
-	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) HOSTCFLAGS="$(LINUX_HOSTCFLAGS)" $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG)
+	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE)  O=$(SOFT_BUILD)/linux-build -C ${LINUXSRC} $(LINUX_CONFIG)
 
 
 $(SOFT_BUILD)/linux-build/vmlinux: $(SOFT_BUILD)/sysroot.cpio $(SOFT_BUILD)/linux-build/.config
-	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) HOSTCFLAGS="$(LINUX_HOSTCFLAGS)" $(MAKE) -C $(SOFT_BUILD)/linux-build
+	$(QUIET_MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_LINUX) $(MAKE) -C $(SOFT_BUILD)/linux-build KCFLAGS="-fcommon" HOSTCFLAGS="-fcommon"
 
 
 $(SOFT_BUILD)/pk-build:
@@ -227,10 +241,11 @@ XMLOGOPT += -DEFINE WT_DCACHE=1
 
 ifeq ("$(CPU_ARCH)", "ariane")
 INCDIR += $(ARIANE)/src/common_cells/include
-VERILOG_ARIANE += $(foreach f, $(shell strings $(FLISTS)/ariane_vlog.flist), $(ARIANE)/$(f))
+VERILOG_ARIANE += $(foreach f, $(call safe_strings,$(FLISTS)/ariane_vlog.flist), $(ARIANE)/$(f))
 VERILOG_ARIANE += $(DESIGN_PATH)/$(ESP_CFG_BUILD)/plic_regmap.sv
 ifneq ($(filter $(TECHLIB),$(FPGALIBS)),)
-VERILOG_ARIANE += $(foreach f, $(shell strings $(FLISTS)/ariane_fpga_vlog.flist), $(ARIANE)/$(f))
+VERILOG_ARIANE += $(foreach f, $(call safe_strings,$(FLISTS)/ariane_fpga_vlog.flist), $(ARIANE)/$(f))
 endif
 THIRDPARTY_VLOG += $(VERILOG_ARIANE)
 endif
+

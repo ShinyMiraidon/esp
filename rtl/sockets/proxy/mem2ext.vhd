@@ -33,8 +33,6 @@ use work.misc.all;
 use work.net.all;
 -- pragma translate_off
 use work.sim.all;
-library unisim;
-use unisim.all;
 -- pragma translate_on
 use work.monitor_pkg.all;
 use work.sldacc.all;
@@ -298,6 +296,10 @@ begin  -- architecture rtl
     origin_y   := get_origin_y(DMA_NOC_FLIT_SIZE, dma_noc_flit_pad & dma_rcv_data_out);
     origin_x   := get_origin_x(DMA_NOC_FLIT_SIZE, dma_noc_flit_pad & dma_rcv_data_out);
     header_v   := create_header(DMA_NOC_FLIT_SIZE, local_y, local_x, origin_y, origin_x, msg_type_rsp, reserved);
+    -- Echo the DMA transaction id from the request header. A requester with
+    -- more than one read in flight matches responses to its outstanding table
+    -- by this tag;
+    header_v   := set_dma_tran_id(header_v, get_dma_tran_id(dma_rcv_data_out));
     dma_header <= header_v;
   end process make_dma_packet;
 
@@ -365,6 +367,7 @@ begin  -- architecture rtl
     llc_ext_rsp_valid <= '0';
     dma_rcv_rdreq <= '0';
     dma_snd_wrreq <= '0';
+    dma_snd_data_in <= (others => '0');
 
     llc_ext_rsp_data <= ext_rcv_data_out;
 

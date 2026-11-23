@@ -17,8 +17,6 @@ use work.gencomp.all;
 use work.leon3.all;
 -- pragma translate_off
 use work.sim.all;
-library unisim;
-use unisim.all;
 -- pragma translate_on
 use work.monitor_pkg.all;
 use work.esp_csr_pkg.all;
@@ -422,7 +420,7 @@ begin
       ROMBase 		=> X"0000_0000",
       ROMLength 	=> X"0000_1000",
       DRAMBase 		=> DRAM_BASE,
-      DRAMLength 	=> X"4000_0000"
+      DRAMLength 	=> DRAM_LENGTH
     )
     port map (
       clk 		    => tile_clk,
@@ -703,9 +701,10 @@ begin
   begin
     if this_has_ddr = 1 then
       mon_ddr.word_transfer <= '0';
-      if ddr_axi_si_temp.w.valid = '1' and ddr_axi_so.w.ready = '1' then
-        mon_ddr.word_transfer <= '1';
-      end if;
+      if (ddr_axi_si_temp.w.valid = '1' and ddr_axi_so.w.ready = '1') or
+         (ddr_axi_so.r.valid = '1' and ddr_axi_si_temp.r.ready = '1') then
+           mon_ddr.word_transfer <= '1';
+      end if;  
     else
       -- TODO: connect to FPGA link activity
       mon_ddr.word_transfer <= '0';
@@ -750,7 +749,8 @@ begin
         eth_dma     		=> 0,
         narrow_noc  		=> 0,
         cacheline   		=> CFG_DLINE,	
-		this_coh_flit_size  => COH_NOC_FLIT_SIZE)
+		this_coh_flit_size  => COH_NOC_FLIT_SIZE,
+		dma_multi_ot        => DMA_MULTI_OT_EN)
       port map (
         ACLK  		=> tile_clk,
         ARESETn 	=> rst,
@@ -829,7 +829,8 @@ begin
         eth_dma     => 1,
         narrow_noc  => 0,
         cacheline   => 1,
-		this_coh_flit_size  => ARCH_NOC_FLIT_SIZE)
+		this_coh_flit_size  => ARCH_NOC_FLIT_SIZE,
+		dma_multi_ot        => DMA_MULTI_OT_EN)
       port map (
         ACLK  		=> tile_clk,
         ARESETn 	=> rst,
@@ -908,7 +909,8 @@ begin
         eth_dma     		=> 0,
         narrow_noc  		=> 0,
         cacheline   		=> CFG_DLINE,
-		this_coh_flit_size  => ARCH_NOC_FLIT_SIZE)
+		this_coh_flit_size  => ARCH_NOC_FLIT_SIZE,
+		dma_multi_ot        => DMA_MULTI_OT_EN)
       port map (
         ACLK  		=> tile_clk,
         ARESETn 	=> rst,
@@ -1140,7 +1142,8 @@ begin
         eth_dma     => 0,
         narrow_noc  => 0,
         cacheline   => 1,
-		this_coh_flit_size  => ARCH_NOC_FLIT_SIZE)
+		this_coh_flit_size  => ARCH_NOC_FLIT_SIZE,
+		dma_multi_ot        => DMA_MULTI_OT_EN)
       port map (
         ACLK  		=> tile_clk,
         ARESETn 	=> rst,

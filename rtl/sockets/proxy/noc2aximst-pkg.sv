@@ -15,6 +15,21 @@ import esp_global_sv::*;
 parameter integer DMA_NOC_FLIT_SIZE = `PREAMBLE_WIDTH + DMA_NOC_WIDTH;
 parameter integer MAX_NOC_FLIT_SIZE = `PREAMBLE_WIDTH + MAX_NOC_WIDTH;
 
+// DMA-plane NoC header transaction ID field.
+// MIRROR of the VHDL definition in rtl/noc/nocpackage.vhd.
+parameter integer DMA_TRAN_ID_MAX_WIDTH = 4;
+parameter integer DMA_MCAST_WINDOW_WIDTH =
+    MULTICAST_NOC_EN * (MAX_MCAST_DESTS + 2*GLOB_YX_WIDTH*(MAX_MCAST_DESTS - 1));
+parameter integer DMA_HDR_UNUSED_WIDTH  =
+    DMA_NOC_FLIT_SIZE - `PREAMBLE_WIDTH - 4*GLOB_YX_WIDTH - `MSG_TYPE_WIDTH - `RESERVED_WIDTH
+    - `NEXT_ROUTING_WIDTH - DMA_MCAST_WINDOW_WIDTH;
+parameter integer DMA_TRAN_ID_WIDTH =
+    (DMA_HDR_UNUSED_WIDTH < DMA_TRAN_ID_MAX_WIDTH) ? DMA_HDR_UNUSED_WIDTH : DMA_TRAN_ID_MAX_WIDTH;
+parameter integer DMA_TRAN_ID_MSB   =
+    DMA_NOC_FLIT_SIZE - `PREAMBLE_WIDTH - 4*GLOB_YX_WIDTH - `MSG_TYPE_WIDTH - `RESERVED_WIDTH - 1;
+parameter integer DMA_TRAN_ID_LSB   = DMA_TRAN_ID_MSB - DMA_TRAN_ID_WIDTH + 1;
+
+
 //`define RSP_AHB_RD 30
 //`define RSP_DATA 24
 //`define RSP_DATA_DMA
@@ -76,27 +91,24 @@ typedef struct {
 	logic [`PREAMBLE_WIDTH-1 : 0]					preamble_flag;
     logic [GLOB_PHYS_ADDR_BITS-1 : 0]				aw_addr;
     logic [GLOB_PHYS_ADDR_BITS-1 : 0]				ar_addr;
-    logic [AXIDW-1 : 0]	w_data;
-    logic [7 : 0]		ar_len;
-    logic [2 : 0]		ar_size;
-    logic [2 : 0]		ar_prot;
-	logic				ar_valid;
-	logic				r_ready;
-    logic [7 : 0]		aw_len;
-    logic [7 : 0]		word_rem;
-    logic [2 : 0]		aw_size;
-    logic [2 : 0]		aw_prot;
-    logic [AW-1 : 0]	w_strb;
-    logic				aw_valid;
-    logic				w_last;
-    logic				w_valid;
-    logic				b_ready;
-	logic [31 : 0]		count;
-    logic [1 : 0]		sample_flag;
-    logic				burst_flag;
-    logic				coh_dma_flag;
-    logic				hsize_msb;
-} reg_type;
+    logic [7 : 0]                          ar_len;
+    logic [2 : 0]                          ar_size;
+    logic [2 : 0]                          ar_prot;
+    logic                                  ar_valid;
+    logic [7 : 0]                          aw_len;
+    logic [7 : 0]                          word_rem;
+    logic [2 : 0]                          aw_size;
+    logic [2 : 0]                          aw_prot;
+    logic [AW-1 : 0]                       w_strb;
+    logic                                  aw_valid;
+    logic [31 : 0]                         count;
+    logic [1 : 0]                          sample_flag;
+    logic                                  burst_flag;
+    logic                                  coh_dma_flag;
+    logic                                  hsize_msb;
+    logic                                  dma_size_valid;
+    logic [2 : 0]                          dma_size;
+  } reg_type;
 
 endpackage
 

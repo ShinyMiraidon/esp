@@ -17,13 +17,16 @@ noyes () {
 }
 
 INSTALL_ARIANE=0
+INSTALL_CVA6=0
 INSTALL_IBEX=0
 INSTALL_ARIANE_LINUX=0
+INSTALL_CVA6_LINUX=0
 INSTALL_LEON3_LINUX=0
 INSTALL_STRATUS_INC=0
 INSTALL_MATCHLIB=0
 INSTALL_CHISEL=0
 INSTALL_NVDLA=0
+INSTALL_VORTEX=0
 INSTALL_SPANDEX=0
 INSTALL_BASEJUMP=0
 INSTALL_ZYNQ=0
@@ -33,12 +36,20 @@ if [ $(noyes "*** QUESTION : Do you want to install the Ariane core?") == "y" ];
     INSTALL_ARIANE=1
 fi
 
+if [ $(noyes "*** QUESTION : Do you want to install the CVA6 core?") == "y" ]; then
+    INSTALL_CVA6=1
+fi
+
 if [ $(noyes "*** QUESTION : Do you want to install the Ibex core?") == "y" ]; then
     INSTALL_IBEX=1
 fi
 
 if [ $(noyes "*** QUESTION : Do you want to install Linux for the Ariane core?") == "y" ]; then
     INSTALL_ARIANE_LINUX=1
+fi
+
+if [ $(noyes "*** QUESTION : Do you want to install Linux for the CVA6 core?") == "y" ]; then
+    INSTALL_CVA6_LINUX=1
 fi
 
 if [ $(noyes "*** QUESTION : Do you want to install Linux for the Leon3 core?") == "y" ]; then
@@ -59,6 +70,10 @@ fi
 
 if [ $(noyes "*** QUESTION : Do you want to install NVDLA?") == "y" ]; then
     INSTALL_NVDLA=1
+fi
+
+if [ $(noyes "*** QUESTION : Do you want to install Vortex?") == "y" ]; then
+    INSTALL_VORTEX=1
 fi
 
 if [ $(noyes "*** QUESTION : Do you want to install Spandex caches?") == "y" ]; then
@@ -86,6 +101,12 @@ if [ ${INSTALL_ARIANE} == 1 ]; then
     git submodule update --init --recursive soft/ariane/riscv-pk
     git submodule update --init --recursive soft/ariane/riscv-tests
 fi
+if [ ${INSTALL_CVA6} == 1 ]; then
+    git submodule update --init --recursive rtl/cores/cva6/cva6
+    git submodule update --init --recursive soft/cva6/opensbi
+    git submodule update --init --recursive soft/ariane/riscv-pk
+    git submodule update --init --recursive soft/ariane/riscv-tests
+fi
 
 if [ ${INSTALL_IBEX} == 1 ]; then
     git submodule update --init --recursive rtl/cores/ibex/ibex
@@ -96,6 +117,10 @@ fi
 
 if [ ${INSTALL_ARIANE_LINUX} == 1 ]; then
     git submodule update --init --recursive soft/ariane/linux
+fi
+
+if [ ${INSTALL_CVA6_LINUX} == 1 ]; then
+    git submodule update --init --recursive soft/cva6/linux
 fi
 
 if [ ${INSTALL_LEON3_LINUX} == 1 ]; then
@@ -116,6 +141,10 @@ fi
 
 if [ ${INSTALL_NVDLA} == 1 ]; then
     git submodule update --init --recursive accelerators/third-party/NV_NVDLA
+fi
+
+if [ ${INSTALL_VORTEX} == 1 ]; then
+    git submodule update --init --recursive accelerators/third-party/GT_VORTEX/vortex
 fi
 
 if [ ${INSTALL_SPANDEX} == 1 ]; then

@@ -1,6 +1,6 @@
 # Copyright (c) 2011-2026 Columbia University, System Level Design Group
 # SPDX-License-Identifier: Apache-2.0
-ifeq ("$(CPU_ARCH)", "ariane")
+ifneq ($(filter cva6 ariane,$(CPU_ARCH)),)
 CROSS_COMPILE ?= riscv64-unknown-linux-gnu-
 ARCH ?= riscv
 else # ifeq ("$(CPU_ARCH)", "leon3")
@@ -52,7 +52,7 @@ $(BUILD_PATH)/%.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@ $(LDFLAGS)
 endif
 
-$(BUILD_PATH)/%.exe: %.c $(OBJS) $(HEADERS)
+$(BUILD_PATH)/%.exe: %.c $(OBJS) $(EXTRA_OBJS)  $(HEADERS)
 	CROSS_COMPILE=$(CROSS_COMPILE) DRIVERS=$(DRIVERS) $(MAKE) -C $(BUILD_DRIVERS)/contig_alloc/ libcontig.a
 	CROSS_COMPILE=$(CROSS_COMPILE) BUILD_PATH=$(BUILD_DRIVERS)/test $(MAKE) -C $(DRIVERS)/test
 	CROSS_COMPILE=$(CROSS_COMPILE) BUILD_PATH=$(BUILD_DRIVERS)/libesp $(MAKE) -C $(DRIVERS)/libesp

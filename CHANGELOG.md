@@ -87,7 +87,68 @@ adheres to [Calendar Versioning](https://calver.org/) with format
 
 - **Infrastructure**
   - Realigned the `epochs0-gf12` defconfig with the socgen parser
-  - socgen no longer requires the unused `Pmw` package
+
+  ## [2026.2.0]
+
+  ### Added
+
+- **Architecture**
+  - CVA6 processor integration, with multicore support and Linux boot (#312)
+  - Altera FPGA backend support and the Terasic DE10-Pro SX board port (#338)
+  - Vortex v2.2 GPGPU integrated as a third-party accelerator (#338)
+  - Multi-outstanding DMA read transactions inside memory tiles (#348)
+  - BRAM/URAM selection for accelerator PLMs and LLC/L2 line memory, with
+    an alternative URAM mapping for the ESP caches (#345)
+  - Configurable per-FPGA DDR size knob
+
+
+- **Accelerator flows**
+  - Bambu HLS as a new accelerator design flow (#343)
+
+- **Software**
+  - Bare-metal interrupt example application (#341)
+  - Linux application for the vec_add RTL accelerator
+
+### Improved
+
+- **Architecture**
+  - NoC header flit mapping for multi-outstanding transactions, removing
+    unnecessary blocking on AXI writes
+  - CPU tile cleanup and refactored FPGA memory/cache selection
+
+- **Infrastructure**
+  - ESP ASIC flow refactor (#303)
+  - Questa simulation now builds third-party accelerator libraries with fixed multicore simulation
+  - CVA6 submodule hosted under sld-columbia with ESP patches pre-applied, cloned over https
+  - Toolchains: buildroot builds on glibc >= 2.33 hosts (#296), Altera HPS toolchain added
+
+### Fixed
+
+- **Architecture**
+  - Memory-tile proxy dropped the last beat of 256*m+1-beat DMA bursts
+  - AXI crossbar decode overflow for more than 1 GB of DRAM on CVA6
+  - L2 cache and LLC AXI wrapper bugs
+  - Bitwidth mismatch in the response header
+  - esp_acc_dma waits for legacy cache flush completion before DONE (#332)
+  - P2P: added reset to the YX register and cleared stale routing fields
+    between jobs
+  - EDCL: UDP reply source port (#340) and buffer initialization
+  - Cacheable DDR length calculation
+  - Simulation memory model fix
+
+- **Software**
+  - contig_alloc: synchronize accelerator page tables after population (#328) 
+	and reject preferred DDR indices outside the configured range (#326)
+  - LEON3 PROM initialization of GPTIMER and the stack pointer for
+    Linux boot
+
+
+- **Infrastructure**
+  - RTL accelerator template generation (#308)
+  - CVA6 synthesis on Altera, CVA6 Vivado defines, and CVA6 flags for
+    Vortex synthesis (#349)
+
+
 
 ## [2026.1.0]
 
@@ -103,7 +164,7 @@ adheres to [Calendar Versioning](https://calver.org/) with format
 
 ## Improved
 
-- **Architecture**  
+- **Architecture**
   - Accelerator Design Flows
   - Refined Catapult SystemC flow (#264)
   - General Catapult HLS flow update (#271)
@@ -122,11 +183,11 @@ adheres to [Calendar Versioning](https://calver.org/) with format
   - Corrected NoC credit accounting bugs for async logic inside iolink2ahbm
   - Fixed large cache-line issue in ASIC flow
   - Properly cleared P2P transaction flags
-  - Fixed bug to enable non-power-of-two CPU instances 
+  - Fixed bug to enable non-power-of-two CPU instances
 
   **Software**
   - Fixed bugs inside the LeakyReLU accelerator software release (#288)
-  - Improved accelerator compilation for RTL and Third-party flow 
+  - Improved accelerator compilation for RTL and Third-party flow
 
   **Infrastructure**
   - Removed Vivado warning regressions

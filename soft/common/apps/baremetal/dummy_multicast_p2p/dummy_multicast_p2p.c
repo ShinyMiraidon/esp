@@ -25,6 +25,8 @@ typedef u64 token_t;
 
 #define TOKENS_REG 0x40
 #define BATCH_REG  0x44
+#define SOURCE_REG 0x48
+#define NDESTS_REG 0x4C
 
 // User defined registers
 #define TOKENS 64
@@ -60,6 +62,7 @@ void p2p_setup(struct esp_device *dev, int p2p_store, int mcast_ndests, int p2p_
                struct esp_device *p2p_src)
 {
     esp_p2p_reset(dev);
+    esp_mcast_reset(dev);
     if (p2p_store) {
         esp_p2p_enable_dst(dev);
         esp_p2p_set_mcast_ndests(dev, mcast_ndests);
@@ -92,7 +95,7 @@ int main(int argc, char *argv[])
 
     unsigned **ptable = NULL;
     token_t *mem;
-    int i;
+    int i = 0;
 
     // Check if scatter-gather DMA is disabled
     if (ioread32(&devs[i], PT_NCHUNK_MAX_REG) == 0) {
@@ -136,6 +139,8 @@ int main(int argc, char *argv[])
         // Accelerator-specific registers
         iowrite32(&devs[i], TOKENS_REG, TOKENS);
         iowrite32(&devs[i], BATCH_REG, BATCH);
+		iowrite32(&devs[i], SOURCE_REG, 0);
+		iowrite32(&devs[i], NDESTS_REG, 0);
     }
 
     // Flush for non-coherent DMA

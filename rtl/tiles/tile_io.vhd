@@ -21,8 +21,6 @@ use work.gptimer_pkg.all;
 use work.net.all;
 -- pragma translate_off
 use work.sim.all;
-library unisim;
-use unisim.all;
 -- pragma translate_on
 use work.monitor_pkg.all;
 use work.esp_csr_pkg.all;
@@ -33,7 +31,7 @@ use work.tile.all;
 use work.coretypes.all;
 use work.grlib_config.all;
 use work.socmap.all;
-use work.ariane_esp_pkg.all;
+use work.riscv_interrupt_pkg.all;
 use work.ibex_esp_pkg.all;
 
 entity tile_io is
@@ -788,7 +786,7 @@ begin
   end generate;
 
   irq_sources <= noc_apbi_wirq.pirq(29 downto 0);
-  riscv_plic_gen: if GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = ibex generate
+  riscv_plic_gen: if GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = cva6 or GLOB_CPU_ARCH = ibex generate
 
     x : for i in 0 to CFG_NCPU_TILE-1 generate
       riscv_irqinfo_proc : process (irq, timer_irq, ipi) is
@@ -919,7 +917,7 @@ begin
    
   end generate;
 
-  unused_riscv_irq_gen: if GLOB_CPU_ARCH /= ariane and GLOB_CPU_ARCH /= ibex generate
+  unused_riscv_irq_gen: if GLOB_CPU_ARCH /= ariane and GLOB_CPU_ARCH /= cva6 and GLOB_CPU_ARCH /= ibex generate
     irq <= (others => '0');
     timer_irq <= (others => '0');
     ipi <= (others => '0');
@@ -970,7 +968,7 @@ begin
   end generate;
 
 
-  ariane_nogpt_gen : if GLOB_CPU_ARCH = ariane  generate
+  ariane_nogpt_gen : if GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = cva6 generate
     noc_apbo(3) <= apb_none;
   end generate;
 
@@ -1181,7 +1179,7 @@ begin
   -- Connect pready for APB3 devices
   pready_gen: process (plic_pready, ibex_timer_pready, noc_apbi) is
   begin  -- process pready_gen
-    if noc_apbi.psel(2) = '1' and (GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = ibex) then
+    if noc_apbi.psel(2) = '1' and (GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = cva6 or GLOB_CPU_ARCH = ibex) then
       pready <= plic_pready;
     elsif noc_apbi.psel(3) = '1' and GLOB_CPU_ARCH = ibex then
       pready <= ibex_timer_pready;

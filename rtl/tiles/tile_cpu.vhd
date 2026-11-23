@@ -17,12 +17,11 @@ use work.devices.all;
 use work.gencomp.all;
 use work.leon3.all;
 use work.ariane_esp_pkg.all;
+use work.cva6_esp_pkg.all;
 use work.ibex_esp_pkg.all;
 use work.misc.all;
 -- pragma translate_off
 use work.sim.all;
-library unisim;
-use unisim.all;
 -- pragma translate_on
 use work.monitor_pkg.all;
 use work.esp_csr_pkg.all;
@@ -227,8 +226,8 @@ architecture rtl of tile_cpu is
   signal mosi       : axi_mosi_vector(0 to 4);
   signal somi       : axi_somi_vector(0 to 4);
 
-  signal ariane_drami : axi_mosi_type;
-  signal ariane_dramo : axi_somi_type;
+  signal cpu_drami : axi_mosi_type;
+  signal cpu_dramo : axi_somi_type;
 
   signal cache_drami : axi_mosi_type;
   signal cache_dramo : axi_somi_type;
@@ -246,6 +245,19 @@ architecture rtl of tile_cpu is
   -- GRLIB parameters
   constant disas : integer := CFG_DISAS;
   constant pclow : integer := CFG_PCLOW;
+
+  function leon3_memtech_from_fabtech(fabtech : integer) return integer is
+  begin
+    if fabtech = stratix10 then
+      -- GRLIB has no Stratix 10 syncram_2p implementation, so infer the LEON3
+      -- register-file and cache memories for Intel FPGA targets.
+      return inferred;
+    end if;
+
+    return fabtech;
+  end function leon3_memtech_from_fabtech;
+
+  constant leon3_memtech : integer := leon3_memtech_from_fabtech(CFG_FABTECH);
 
   -- Soft reset
   signal srst : std_ulogic;
@@ -282,7 +294,29 @@ architecture rtl of tile_cpu is
   constant this_remote_apb_slv_en : std_logic_vector(0 to NAPBSLV - 1) := remote_apb_slv_mask_cpu;
   constant this_remote_ahb_slv_en : std_logic_vector(0 to NAHBSLV - 1) := remote_ahb_mask_cpu;
 
-  constant ariane_cacheable_len : integer := (1 + CFG_L2_ENABLE) * 16#20000000#;
+    function set_ariane_cacheable_len
+      return std_logic_vector is
+    begin
+      if CFG_L2_ENABLE /= 0 then
+        return X"0000_0000" & DRAM_LENGTH;
+      else
+        return X"0000_0000" & '0' & DRAM_LENGTH(31 downto 1);
+      end if;
+    end;
+
+  constant ariane_cacheable_len : std_logic_vector(63 downto 0) := set_ariane_cacheable_len;
+
+  function set_ariane_slmddr_len
+    return std_logic_vector is
+  begin
+    if CFG_NSLMDDR_TILE = 0 then
+      return X"0000_0000_0000_0000";
+    else
+      return X"0000_0000" & SLMDDR_LENGTH;
+    end if;
+  end function;
+
+  constant ariane_slmddr_len : std_logic_vector(63 downto 0) := set_ariane_slmddr_len;
 
   attribute mark_debug : string;
 
@@ -459,7 +493,7 @@ begin
   process(tile_clk, rst)
   begin  -- process
     if rst = '1' then
-      assert (GLOB_CPU_ARCH = leon3 or GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = ibex) report "Processor core architecture not supported!" severity failure;
+      assert (GLOB_CPU_ARCH = leon3 or GLOB_CPU_ARCH = ariane or GLOB_CPU_ARCH = cva6 or GLOB_CPU_ARCH = ibex) report "Processor core architecture not supported!" severity failure;
     end if;
   end process;
   --pragma translate_on
@@ -604,7 +638,7 @@ begin
   leon3_cpu_gen: if GLOB_CPU_ARCH = leon3 generate
 
   leon3_0 : leon3s
-    generic map (0, CFG_FABTECH, CFG_FABTECH, CFG_NWIN, CFG_DSU, CFG_FPU, CFG_V8,
+    generic map (0, CFG_FABTECH, leon3_memtech, CFG_NWIN, CFG_DSU, CFG_FPU, CFG_V8,
                  0, CFG_MAC, pclow, CFG_NOTAG, CFG_NWP, CFG_ICEN, CFG_IREPL, CFG_ISETS, CFG_ILINE,
                  CFG_ISETSZ, CFG_ILOCK, CFG_DCEN, CFG_DREPL, CFG_DSETS, CFG_DLINE, CFG_DSETSZ,
                  CFG_DLOCK, CFG_DSNOOP, CFG_ILRAMEN, CFG_ILRAMSZ, CFG_ILRAMADDR, CFG_DLRAMEN,
@@ -684,11 +718,11 @@ begin
         CLINTLength      => conv_std_logic_vector(ARIANE_CLINT_LEN, 64),
         SLMBase          => X"0000_0000_0400_0000",
         SLMLength        => X"0000_0000_0400_0000",  -- Reserving up to 64MB; devtree can set less
-        SLMDDRBase       => X"0000_0000_C000_0000",
-        SLMDDRLength     => X"0000_0000_4000_0000",  -- Reserving up to 1GB; devtree can set less
+        SLMDDRBase       => X"0000_0000" & SLMDDR_BASE,
+        SLMDDRLength     => ariane_slmddr_len,  -- Reserving up to 1GB; disabled when no SLMDDR tile exists
         DRAMBase         => X"0000_0000" & conv_std_logic_vector(ddr_haddr(0), 12) & X"0_0000",
-        DRAMLength       => X"0000_0000_4000_0000",
-        DRAMCachedLength => conv_std_logic_vector(ariane_cacheable_len, 64))  -- TODO: length set automatically to match devtree
+        DRAMLength       => X"0000_0000" & DRAM_LENGTH,
+        DRAMCachedLength => ariane_cacheable_len)  
       port map (
         clk         => tile_clk,
         rstn        => cpurstn,
@@ -698,8 +732,8 @@ begin
         ipi         => ipi,
         romi        => mosi(0),
         romo        => somi(0),
-        drami       => ariane_drami,
-        dramo       => ariane_dramo,
+        drami       => cpu_drami,
+        dramo       => cpu_dramo,
         clinti      => mosi(2),
         clinto      => somi(2),
         slmi        => mosi(3),
@@ -719,7 +753,7 @@ begin
 
     -- exit() writes to this address right before completing the program
     -- Next instruction is a jump to current PC.
-    cpuerr <= '1' when ariane_drami.aw.addr = X"80001000" and ariane_drami.aw.valid = '1' else '0';
+    cpuerr <= '1' when cpu_drami.aw.addr = X"80001000" and cpu_drami.aw.valid = '1' else '0';
 
     -- RISC-V PLIC/CLINT outputs
     irq       <= irqi.irl(1 downto 0);
@@ -730,6 +764,67 @@ begin
     irqo <= irq_out_none;
 
   end generate ariane_cpu_gen;
+
+  -- CVA6
+  cva6_cpu_gen: if GLOB_CPU_ARCH = cva6 generate
+    cva6_axi_wrap_1: cva6_axi_wrap
+      generic map (
+        NMST             => 2,
+        NSLV             => 6,
+        ROMBase          => X"0000_0000_0001_0000",
+        ROMLength        => X"0000_0000_0001_0000",
+        APBBase          => X"0000_0000" & conv_std_logic_vector(CFG_APBADDR, 12) & X"0_0000",
+        APBLength        => X"0000_0000_1000_0000",
+        CLINTBase        => X"0000_0000_0200_0000",
+        CLINTLength      => X"0000_0000_000C_0000",
+        SLMBase          => X"0000_0000_0400_0000",
+        SLMLength        => X"0000_0000_0400_0000",
+        SLMDDRBase       => X"0000_0000" & SLMDDR_BASE,
+        SLMDDRLength     => ariane_slmddr_len,
+        DRAMBase         => X"0000_0000" & conv_std_logic_vector(ddr_haddr(0), 12) & X"0_0000",
+        DRAMLength       => X"0000_0000" & DRAM_LENGTH,
+        DRAMCachedLength => ariane_cacheable_len)
+      port map (
+        clk         => tile_clk,
+        rstn        => cpurstn,
+        HART_ID     => this_cpu_id_lv,
+        irq         => irq,
+        timer_irq   => timer_irq,
+        ipi         => ipi,
+        romi        => mosi(0),
+        romo        => somi(0),
+        drami       => cpu_drami,
+        dramo       => cpu_dramo,
+        clinti      => mosi(2),
+        clinto      => somi(2),
+        slmi        => mosi(3),
+        slmo        => somi(3),
+        slmddri     => mosi(4),
+        slmddro     => somi(4),
+        ace_req     => ace_req,
+        ace_resp    => ace_resp,
+        apbi        => apbi,
+        apbo        => apbo,
+        apb_req     => apb_req,
+        apb_ack     => apb_ack,
+        fence_l2    => fence_l2,
+        flush_l1    => flush_l1,
+        flush_done  => dflush
+      );
+
+    -- exit() writes to this address right before completing the program
+    -- Next instruction is a jump to current PC.
+    cpuerr <= '1' when cpu_drami.aw.addr = X"80001000" and cpu_drami.aw.valid = '1' else '0';
+
+    -- RISC-V PLIC/CLINT outputs
+    irq       <= irqi.irl(1 downto 0);
+    timer_irq <= irqi.irl(2);
+    ipi       <= irqi.irl(3);
+
+    -- IRQ claim/ack occurs via memory-mapped registers
+    irqo <= irq_out_none;
+
+  end generate cva6_cpu_gen;
 
   -----------------------------------------------------------------------------
   -- Services
@@ -924,12 +1019,11 @@ begin
 
   end generate leon3_cpu_tile_services_gen;
 
+  riscv_cpu_tile_services_gen: if GLOB_CPU_ARCH = cva6 or GLOB_CPU_ARCH = ariane  generate
 
-  ariane_cpu_tile_services_gen: if GLOB_CPU_ARCH = ariane generate
-
-    ariane_with_cache_coherence: if CFG_L2_ENABLE /= 0 generate
-      cache_drami <= ariane_drami;
-      ariane_dramo <= cache_dramo;
+    cva6_with_cache_coherence: if CFG_L2_ENABLE /= 0 generate
+      cache_drami <= cpu_drami;
+      cpu_dramo <= cache_dramo;
 
       mosi(1) <= axi_mosi_none;
 
@@ -967,14 +1061,14 @@ begin
           remote_ahbs_rcv_empty      => remote_ahbs_rcv_empty,
           coherence                  => 0);
 
-    end generate ariane_with_cache_coherence;
+    end generate cva6_with_cache_coherence;
 
-    ariane_no_cache_coherence : if CFG_L2_ENABLE = 0 generate
+    cpu_no_cache_coherence : if CFG_L2_ENABLE = 0 generate
       cache_drami <= axi_mosi_none;
       ace_req     <= ace_req_none;
 
-      mosi(1) <= ariane_drami;
-      ariane_dramo <= somi(1);
+      mosi(1) <= cpu_drami;
+      cpu_dramo <= somi(1);
 
       coherence_rsp_snd_data_in <= (others => '0');
       coherence_rsp_snd_wrreq   <= '0';
@@ -1013,7 +1107,7 @@ begin
           remote_ahbs_rcv_empty      => remote_ahbs_rcv_empty,
           coherence                  => 0);
 
-    end generate ariane_no_cache_coherence;
+    end generate cpu_no_cache_coherence;
 
     -- Remote uncached slaves: shared-local memory; using DMA planes
     axislv2noc_3: axislv2noc
@@ -1048,7 +1142,7 @@ begin
         remote_ahbs_rcv_empty      => '1',
         coherence                  => 0);
 
-  end generate ariane_cpu_tile_services_gen;
+  end generate riscv_cpu_tile_services_gen;
 
   --Monitors
   mon_cache <= mon_cache_int;

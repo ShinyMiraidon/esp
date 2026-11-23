@@ -9,23 +9,18 @@ export SCRIPT_PATH=$(realpath $(dirname "$0"))
 ESP_ROOT=$(realpath ${SCRIPT_PATH}/../..)
 LINUXSRC=${ESP_ROOT}/soft/ariane/linux
 LINUX_VERSION=4.20.0
-export SYSROOT=${ESP_ROOT}/soft/ariane/sysroot
+export SYSROOT_ARIANE=${ESP_ROOT}/soft/ariane/sysroot
+export SYSROOT_CVA6=${ESP_ROOT}/soft/cva6/sysroot
 RISCV_GNU_TOOLCHAIN_SHA_DEFAULT=afcc8bc655d30cf6af054ac1d3f5f89d0627aa79
 RISCV_GNU_TOOLCHAIN_SHA_PYTHON=2c037e631e27bc01582476f5b3c5d5e9e51489b8
 BUILDROOT_SHA_DEFAULT=d6fa6a45e196665d6607b522f290b1451b949c2c
 BUILDROOT_SHA_PYTHON=fbff7d7289cc95db991184f890f4ca1fcf8a101e
 
-# GNU Make 4.4+ can loop forever while rebuilding the old GlibC snapshot
-# pinned by the RISC-V GNU toolchain above (typically in stdio-common).
-# Honor an explicit MAKE override and patch the temporary GlibC checkout with
-# the upstream dependency fix when GNU Make 4.4 or newer is selected.
-MAKE_CMD=${MAKE:-make}
-GLIBC_MAKE_4_4_PATCH=${SCRIPT_PATH}/glibc-make-4.4.patch
-
 # A patch for buildroot RISCV64 with numpy enabled
 BUILDROOT_PATCH=${ESP_ROOT}/utils/toolchain/python-patches/python-numpy.patch
 
 DEFAULT_TARGET_DIR="/home/${USER}/riscv"
+TMP=${ESP_ROOT}/_riscv_build
 
 # Helper functions
 yesno () {
@@ -52,158 +47,6 @@ noyes () {
     done
 }
 
-is_make_4_4_or_newer () {
-    local make_cmd=$1
-    local version_line
-    local major
-    local minor
-
-    version_line=$("${make_cmd}" --version 2>/dev/null | head -n 1) || return 1
-    if [[ ! ${version_line} =~ ^GNU[[:space:]]Make[[:space:]]([0-9]+)\.([0-9]+) ]]; then
-	return 1
-    fi
-
-    major=${BASH_REMATCH[1]}
-    minor=${BASH_REMATCH[2]}
-    (( major > 4 || (major == 4 && minor >= 4) ))
-}
-
-patch_glibc_for_make_4_4 () {
-    local glibc_dir
-
-    if ! is_make_4_4_or_newer "${MAKE_CMD}"; then
-	return
-    fi
-
-    for glibc_dir in glibc riscv-glibc; do
-	if [ -d "${glibc_dir}" ]; then
-	    if git -C "${glibc_dir}" apply --check "${GLIBC_MAKE_4_4_PATCH}"; then
-		git -C "${glibc_dir}" apply "${GLIBC_MAKE_4_4_PATCH}"
-		echo "*** Patched legacy GlibC for GNU Make 4.4+ ***"
-		return
-	    fi
-	    if git -C "${glibc_dir}" apply --reverse --check "${GLIBC_MAKE_4_4_PATCH}"; then
-		echo "*** Legacy GlibC GNU Make 4.4+ patch is already applied ***"
-		return
-	    fi
-	fi
-    done
-
-    echo "Unable to apply ${GLIBC_MAKE_4_4_PATCH} to the pinned GlibC checkout."
-    echo "Use GNU Make 4.3 or older as a fallback, for example:"
-    echo "  MAKE=/path/to/make-4.3 $0"
-    exit 1
-}
-
-patch_buildroot_host_fakeroot () {
-    local fakeroot_src
-    local tmp_src
-
-    # Older Buildroot releases pull a fakeroot version whose configure tests can
-    # mis-detect setgroups() on newer host distributions. Newer glibc also hides
-    # the private _STAT_VER macro that this fakeroot still uses on x86 hosts.
-    # Patch the extracted host-fakeroot source before Buildroot configures it.
-    ${MAKE_CMD} host-fakeroot-patch
-
-    fakeroot_src=$(find output/build -maxdepth 2 -type f \
-        -path '*/host-fakeroot-*/libfakeroot.c' -print -quit)
-    if [ -z "${fakeroot_src}" ]; then
-        echo "Unable to find Buildroot host-fakeroot libfakeroot.c."
-        exit 1
-    fi
-
-    if grep -q "ESP_FAKEROOT_GLIBC_COMPAT" "${fakeroot_src}"; then
-        return
-    fi
-
-    tmp_src=${fakeroot_src}.esp-tmp
-    awk '
-        {
-            line = $0
-            gsub(/SEND_GET_STAT64\(r->fts_statp, _STAT_VER\);/,
-                 "SEND_GET_STAT64((struct stat64 *)r->fts_statp, _STAT_VER);",
-                 line)
-            print line
-            if (line == "#include \"communicate.h\"" && !done) {
-                print ""
-                print "/* ESP_FAKEROOT_GLIBC_COMPAT: host compatibility for newer glibc. */"
-                print "#include <sys/types.h>"
-                print "#undef SETGROUPS_SIZE_TYPE"
-                print "#define SETGROUPS_SIZE_TYPE size_t"
-                print "#if defined(__GLIBC__) && !defined(_STAT_VER)"
-                print "# if defined(__x86_64__)"
-                print "#  define _STAT_VER 1"
-                print "# elif defined(__i386__)"
-                print "#  define _STAT_VER 3"
-                print "# endif"
-                print "#endif"
-                done = 1
-            }
-        }
-        END { if (!done) exit 1 }
-    ' "${fakeroot_src}" > "${tmp_src}" || {
-        rm -f "${tmp_src}"
-        echo "Unable to patch ${fakeroot_src} for newer host glibc."
-        exit 1
-    }
-    mv "${tmp_src}" "${fakeroot_src}"
-    echo "*** Patched Buildroot host-fakeroot for newer host GlibC ***"
-}
-
-patch_buildroot_host_m4 () {
-    local m4_src
-    local tmp_src
-
-    # GNU m4 1.4.18 assumes SIGSTKSZ is a preprocessor constant. Newer glibc
-    # may define it through sysconf(), which is valid C but invalid in #elif.
-    ${MAKE_CMD} host-m4-patch
-
-    m4_src=$(find output/build -maxdepth 3 -type f \
-        -path '*/host-m4-*/lib/c-stack.c' -print -quit)
-    if [ -z "${m4_src}" ]; then
-        echo "Unable to find Buildroot host-m4 c-stack.c."
-        exit 1
-    fi
-
-    if grep -q "ESP_M4_SIGSTKSZ_COMPAT" "${m4_src}"; then
-        return
-    fi
-
-    tmp_src=${m4_src}.esp-tmp
-    awk '
-        {
-            if ($0 == "#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384") {
-                print "#elif HAVE_LIBSIGSEGV"
-                print "/* ESP_M4_SIGSTKSZ_COMPAT: SIGSTKSZ may not be #if-safe on newer glibc. */"
-                next
-            }
-            print
-        }
-    ' "${m4_src}" > "${tmp_src}" || {
-        rm -f "${tmp_src}"
-        echo "Unable to patch ${m4_src} for newer host glibc."
-        exit 1
-    }
-    if ! grep -q "ESP_M4_SIGSTKSZ_COMPAT" "${tmp_src}"; then
-        rm -f "${tmp_src}"
-        echo "Unable to find SIGSTKSZ check in ${m4_src}."
-        exit 1
-    fi
-    mv "${tmp_src}" "${m4_src}"
-    echo "*** Patched Buildroot host-m4 for newer host GlibC ***"
-}
-
-configure_git_url_rewrites () {
-    # Keep legacy URL compatibility local to this script and its child processes.
-    export GIT_CONFIG_COUNT=3
-    export GIT_CONFIG_KEY_0=url.https://.insteadOf
-    export GIT_CONFIG_VALUE_0=git://
-    export GIT_CONFIG_KEY_1=url.https://github.com/qemu/.insteadOf
-    export GIT_CONFIG_VALUE_1=git://git.qemu-project.org/
-    export GIT_CONFIG_KEY_2=url.https://gitlab.freedesktop.org/pixman/pixman.insteadOf
-    export GIT_CONFIG_VALUE_2=git://anongit.freedesktop.org/pixman
-}
-
 # Begin
 if [ -w ${PWD} ] ; then
     echo "*** This script will build and install the riscv tool chain for Ariane ***"
@@ -220,18 +63,15 @@ if test ! -e ${LINUXSRC}; then
     exit
 fi
 
-if test ! -e $SYSROOT; then
-    echo "Target root file system ${SYSROOT} does not exist! Run \"git checkout soft/ariane/sysroot\""
+if test ! -e $SYSROOT_ARIANE; then
+    echo "Target root file system ${SYSROOT_ARIANE} does not exist! Run \"git checkout soft/ariane/sysroot\""
     exit
 fi
 
 # Prompt target folder
 read -p "Target folder? ${DEFAULT_TARGET_DIR}: " TARGET_DIR
 TARGET_DIR=${TARGET_DIR:-${DEFAULT_TARGET_DIR}}
-TARGET_DIR=$(realpath -m "${TARGET_DIR}")
-TMP=${RISCV_BUILD_DIR:-${TARGET_DIR}/_riscv_build}
 echo "*** Installing to ${TARGET_DIR} ... ***"
-echo "*** Using build directory ${TMP} ... ***"
 
 # Prompt number of cores to use
 read -p "Number of threads for Make (defaults to as many as possible)? : " NTHREADS
@@ -260,11 +100,13 @@ if test ! -e ${TARGET_DIR}; then
 fi
 
 # Remove and create temporary folder
-rm -rf "$TMP"
-mkdir -p "$TMP"
-cd "$TMP"
+rm -rf $TMP
+mkdir $TMP
+cd $TMP
 
-configure_git_url_rewrites
+git config --global url.https://.insteadOf git://
+git config --global url.https://github.com/qemu/.insteadOf git://git.qemu-project.org/
+git config --global url.https://anongit.freedesktop.org/git/.insteadOf git://anongit.freedesktop.org/
 
 # Python
 echo "*** Python ... ***"
@@ -294,9 +136,13 @@ if [ $(noyes "Skip ${src}") == "n" ]; then
     fi
 
     git reset --hard ${RISCV_GNU_TOOLCHAIN_SHA}
+    # git://anongit.freedesktop.org is unreachable from some networks; repoint
+    git submodule update --init riscv-qemu
+    git config -f riscv-qemu/.gitmodules submodule.pixman.url https://gitlab.freedesktop.org/pixman/pixman.git
+    (cd riscv-qemu && git submodule sync -- pixman)
     git submodule update --init --recursive
     ./configure --prefix=${TARGET_DIR} --disable-gdb
-    cmd="${MAKE_CMD} -j ${NTHREADS}"
+    cmd="make -j ${NTHREADS}"
     runsudo ${TARGET_DIR} "$cmd"
 
 fi
@@ -314,10 +160,13 @@ if [ $(noyes "Skip ${src}") == "n" ]; then
     fi
 
     git reset --hard ${RISCV_GNU_TOOLCHAIN_SHA}
+    # git://anongit.freedesktop.org is unreachable from some networks; repoint
+    git submodule update --init riscv-qemu
+    git config -f riscv-qemu/.gitmodules submodule.pixman.url https://gitlab.freedesktop.org/pixman/pixman.git
+    (cd riscv-qemu && git submodule sync -- pixman)
     git submodule update --init --recursive
-    patch_glibc_for_make_4_4
     ./configure --prefix=${TARGET_DIR} --disable-gdb
-    cmd="${MAKE_CMD} linux -j ${NTHREADS}"
+    cmd="make linux -j ${NTHREADS}"
     runsudo ${TARGET_DIR} "$cmd"
 
 fi
@@ -330,8 +179,8 @@ echo "*** Populating root file system w/ buildroot ... ***"
 if [ $(noyes "Skip buildroot?") == "n" ]; then
     # Reset sysroot overlay to committed content
     cd $ESP_ROOT
-    rm -rf ${SYSROOT}/*
-    git checkout ${SYSROOT}
+    rm -rf ${SYSROOT_ARIANE}/*
+    git checkout ${SYSROOT_ARIANE}
     cd $TMP
 
     if test -e $src; then
@@ -339,43 +188,80 @@ if [ $(noyes "Skip buildroot?") == "n" ]; then
     	git checkout .
     	git pull
     else
-    	git clone https://git.buildroot.net/buildroot
+    	git clone https://github.com/buildroot/buildroot.git
     	cd $src
     fi
 
-if [[ "$python_en" -eq 1 ]]; then       # python enable
     git reset --hard ${BUILDROOT_SHA}
     git submodule update --init --recursive
-    git apply ${BUILDROOT_PATCH}
-    ${MAKE_CMD} distclean
-    ${MAKE_CMD} defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_python_defconfig
-    patch_buildroot_host_fakeroot
-    patch_buildroot_host_m4
-    ${MAKE_CMD} -j ${NTHREADS}
-else                                    # default
-    git reset --hard ${BUILDROOT_SHA}
-    git submodule update --init --recursive
-    ${MAKE_CMD} distclean
-    ${MAKE_CMD} defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_defconfig
-    patch_buildroot_host_fakeroot
-    patch_buildroot_host_m4
-    ${MAKE_CMD} -j ${NTHREADS}
-fi
+
+    if [[ "$python_en" -eq 1 ]]; then
+        git apply ${BUILDROOT_PATCH}
+    fi
+
+    mkdir -p output && touch output/.br-external.mk
+    make distclean
+    mkdir -p output && touch output/.br-external.mk
+
+    # Install glibc >= 2.34 compatibility patches into buildroot package
+    # directories so they are applied automatically during source extraction.
+    # These patches are harmless on older glibc (guarded by #ifndef/#undef).
+    #
+    # - host-m4-sigstksz: glibc 2.34+ changed SIGSTKSZ from a compile-time
+    #   constant to sysconf(), breaking preprocessor checks in m4-1.4.18.
+    # - host-fakeroot-glibc-compat: glibc 2.33+ removed _STAT_VER and related
+    #   macros used by fakeroot-1.20.2.
+    cp ${SCRIPT_PATH}/patches/host-m4-sigstksz.patch \
+        package/m4/0003-fix-sigstksz-glibc-2.34.patch
+    cp ${SCRIPT_PATH}/patches/host-fakeroot-glibc-compat.patch \
+        package/fakeroot/0003-fix-stat-ver-glibc-2.33.patch
+
+    if [[ "$python_en" -eq 1 ]]; then
+        make defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_python_defconfig
+    else
+        make defconfig BR2_DEFCONFIG=${SCRIPT_PATH}/riscv_buildroot_defconfig
+    fi
+
+    # On glibc >= 2.33, buildroot's fakeroot 1.20.2 compiles (thanks to the
+    # _STAT_VER patch) but cannot intercept mknod() at runtime because glibc
+    # removed __xmknod(). We must swap it with the system fakeroot BEFORE the
+    # rootfs step. To do this: build fakeroot first, swap if needed, then
+    # continue the full build.
+    GLIBC_VER=$(/usr/bin/ldd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+$')
+    if [ "$(printf '%s\n' "2.33" "$GLIBC_VER" | sort -V | head -1)" = "2.33" ]; then
+        # glibc >= 2.33: build fakeroot, then swap before full build
+        make host-fakeroot -j ${NTHREADS}
+        if [ -x /usr/bin/fakeroot ]; then
+            echo ""
+            echo "*** glibc ${GLIBC_VER} detected: replacing buildroot fakeroot with system fakeroot ***"
+            echo ""
+            mv output/host/bin/fakeroot output/host/bin/fakeroot.buildroot
+            ln -s /usr/bin/fakeroot output/host/bin/fakeroot
+        else
+            echo ""
+            echo "*** glibc ${GLIBC_VER} detected but no system fakeroot found.   ***"
+            echo "*** Buildroot's fakeroot 1.20.2 cannot intercept mknod() on     ***"
+            echo "*** glibc >= 2.33. Please install fakeroot and re-run:          ***"
+            echo "***   Ubuntu/Debian: sudo apt-get install fakeroot              ***"
+            echo "***   RHEL/CentOS:   sudo yum install fakeroot (requires EPEL) ***"
+            exit 1
+        fi
+    fi
+
+    make -j ${NTHREADS}
 
     # Populate repository sysroot overlay w/ generated files (git ignores them)
     rm output/target/THIS_IS_NOT_YOUR_ROOT_FILESYSTEM
-    cp -r output/target/* ${SYSROOT}/
-    if [ ! -e ${SYSROOT}/init ]; then
-        /usr/bin/install -m 0755 fs/cpio/init ${SYSROOT}/init;
+    cp -r output/target/* ${SYSROOT_ARIANE}/
+    if [ ! -e ${SYSROOT_ARIANE}/init ]; then
+        /usr/bin/install -m 0755 fs/cpio/init ${SYSROOT_ARIANE}/init;
     fi
 
     cd $TMP
 fi
 
-# Keep the build tree under the install prefix. Some upstream toolchain builds
-# leave absolute symlinks into their build output, so deleting this directory can
-# make an otherwise successful install depend on the ESP checkout that built it.
-echo "*** Keeping RISC-V build directory at ${TMP} ***"
+# Remove temporary folder
+rm -rf $TMP
 
 cd ${ESP_ROOT}
 
@@ -388,6 +274,12 @@ if [[ "$python_en" -eq 1 ]]; then       # python enable
 else                                    # default
     echo "This build doesn't have Python"
 fi
+
+# Copy the final sysroot snapshot for CVA6 consumers
+rm -rf "$SYSROOT_CVA6"/*
+cp -a "$SYSROOT_ARIANE"/* "$SYSROOT_CVA6/"
+echo "Copied sysroot to soft/cva6/sysroot."
+
 echo ""
 echo "=== Use the following to load RISC-V environment ==="
 echo -n "  export PATH=${RISCV}/bin:"; echo '$PATH'
@@ -395,3 +287,8 @@ echo "  export RISCV=${RISCV}"
 echo ""
 
 echo "*** Successfully installed RISC-V toolchain to $TARGET_DIR ***"
+
+
+git config --global --remove-section url."https://"
+git config --global --remove-section url."https://github.com/qemu/"
+git config --global --remove-section url."https://anongit.freedesktop.org/git/"
