@@ -1342,11 +1342,13 @@ package tile is
   --    link at 0x8000_0000 with their stack just past _end, so a window at the
   --    base of DRAM would let any initiator bug overwrite the target's code.
   --  * With ESP caches off (CFG_L2_ENABLE = 0, every FPGA defconfig), Ariane
-  --    caches only the first 512 MB of DRAM (ariane_cacheable_len in
-  --    tile_cpu). DRAM is 1 GB (ddr_hmask 0xC00), so 0xA000_0000 up is
-  --    uncached for the target's own CPU, and it sees link writes without
-  --    any flush. With L2 enabled the cached length doubles and this no
-  --    longer holds.
+  --    caches only the first half of DRAM (ariane_cacheable_len in
+  --    tile_cpu, DRAM_LENGTH / 2). At the default CONFIG_DRAM_SIZE_MB of
+  --    1024 that is 0x8000_0000-0x9FFF_FFFF, so 0xA000_0000 up is uncached
+  --    for the target's own CPU, and it sees link writes without any flush.
+  --    With L2 enabled all of DRAM is cached and this no longer holds.
+  -- The window must also lie inside the target's DRAM, which depends on
+  -- CONFIG_DRAM_SIZE_MB; tile_io checks that in target builds.
   -- Linux reserves this range for DMA pools (greth_reserved at 0xA000_0000,
   -- then accelerator buffers), so revisit this before a Linux target.
   constant IOLINK_TARGET_BASE  : std_logic_vector(31 downto 0) := X"A0000000";

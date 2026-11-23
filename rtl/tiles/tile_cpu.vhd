@@ -767,6 +767,16 @@ begin
 
   -- CVA6
   cva6_cpu_gen: if GLOB_CPU_ARCH = cva6 generate
+    -- The I/O link initiator window is reached by widening Ariane's CLINT
+    -- crossbar rule (ARIANE_CLINT_LEN in rtl/sockets/proxy/tile.vhd); CVA6's
+    -- rule below is stock, so its CPU would get decode errors on the window.
+    -- Fail the build instead. Extending it means passing ARIANE_CLINT_BASE /
+    -- ARIANE_CLINT_LEN here too, once CVA6's crossbar is checked to route the
+    -- CLINT port to the I/O tile the way Ariane's does.
+    assert IOLINK_IS_INITIATOR = 0
+      report "I/O link initiator role is only supported with Ariane, not CVA6 (see ARIANE_CLINT_LEN in rtl/sockets/proxy/tile.vhd)"
+      severity failure;
+
     cva6_axi_wrap_1: cva6_axi_wrap
       generic map (
         NMST             => 2,

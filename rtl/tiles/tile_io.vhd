@@ -610,6 +610,16 @@ begin
   assert unsigned(IOLINK_TARGET_BASE(IOLINK_WINDOW_LOG2 - 1 downto 0)) = 0
     report "I/O link target base (IOLINK_TARGET_BASE) is not aligned to the window size (IOLINK_WINDOW_LOG2)"
     severity failure;
+  -- In a target build the window lands in this SoC's DRAM, whose size is
+  -- configurable (CONFIG_DRAM_SIZE_MB). Out of range, the far side's accesses
+  -- would decode as errors or alias, so check it here rather than on the
+  -- board. 33-bit sums: DRAM may end exactly at 4 GB.
+  assert IOLINK_IS_TARGET = 0 or
+    (unsigned('0' & IOLINK_TARGET_BASE) >= unsigned('0' & DRAM_BASE) and
+     unsigned('0' & IOLINK_TARGET_BASE) + 2 ** IOLINK_WINDOW_LOG2 <=
+     unsigned('0' & DRAM_BASE) + unsigned('0' & DRAM_LENGTH))
+    report "I/O link window (IOLINK_TARGET_BASE, 2**IOLINK_WINDOW_LOG2 bytes) is not inside this SoC's DRAM; raise CONFIG_DRAM_SIZE_MB or move IOLINK_TARGET_BASE"
+    severity failure;
 
   -- TARGET: the far side masters into this SoC.
   iolink_target_gen: if IOLINK_IS_TARGET = 1 generate

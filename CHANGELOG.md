@@ -49,6 +49,10 @@ adheres to [Calendar Versioning](https://calver.org/) with format
     the rationale is in `rtl/sockets/proxy/tile.vhd`
   - The I/O link is brought out through `fpga_tile_io` and `esp`. The new
     ports have defaults, so boards that do not use the link need no changes
+  - I/O link builds check the window against 2026.2.0's configurable DRAM
+    size: a target build fails if the window is not inside its DRAM. An
+    initiator build with CVA6 fails, because only Ariane's crossbar is
+    widened to reach the window
 
 ### Fixed
 
