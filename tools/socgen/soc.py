@@ -381,11 +381,16 @@ class SoC_Config():
         line = fp.readline()
         item = line.split()
         self.slm_kbytes.set(int(item[2]))
+        # CONFIG_DRAM_SIZE_MB, added in 2026.2.0. A configuration written
+        # before it -- including the ASIC defconfigs -- goes straight on to
+        # CONFIG_JTAG_EN; keep the default size and leave that line for the
+        # JTAG parse below rather than misreading it as a size.
         line = fp.readline()
-        item = line.split()
-        self.dram_size_mb.set(int(item[2]))
+        if line.find("CONFIG_DRAM_SIZE_MB =") != -1:
+            item = line.split()
+            self.dram_size_mb.set(int(item[2]))
+            line = fp.readline()
         # JTAG (test)
-        line = fp.readline()
         if line.find("CONFIG_JTAG_EN = y") != -1:
             self.jtag_en.set(1)
         else:

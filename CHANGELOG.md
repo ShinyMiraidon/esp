@@ -86,6 +86,10 @@ adheres to [Calendar Versioning](https://calver.org/) with format
     including on SoCs built without ESP caches
 
 - **Infrastructure**
+  - socgen accepts configurations without `CONFIG_DRAM_SIZE_MB` and keeps the
+    default size. 2026.2.0 read that line unconditionally, so it failed on
+    every `.esp_config` written before 2026.2.0 and on its own three ASIC
+    defconfigs
   - Realigned the `epochs0-gf12` defconfig with the socgen parser
 
   ## [2026.2.0]
